@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>School</title>
+
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#12151c" />
+
+<!-- iOS home-screen / standalone-mode support -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="School" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
+<link rel="icon" href="/icons/icon-192.png" />
+<link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+
+<!-- ================= Auth screen ================= -->
+<div id="auth-screen">
+  <div class="brand">
+    <img src="/icons/icon-192.png" alt="" />
+    <h1>School</h1>
+    <p>Your schedule, assignments, and reminders — synced between your devices.</p>
+  </div>
+
+  <div id="auth-setup" class="hidden">
+    <div class="field">
+      <label for="setup-passcode">Choose a passcode</label>
+      <input id="setup-passcode" type="password" inputmode="numeric" autocomplete="new-password" placeholder="At least 4 characters" />
+    </div>
+    <button class="btn primary block" id="setup-submit">Set up</button>
+    <p class="small text-muted mt-8">This passcode unlocks the app on any device — no email or account needed. Use the same one on your iPhone and Mac.</p>
+  </div>
+
+  <div id="auth-login" class="hidden">
+    <div class="field">
+      <label for="login-passcode">Passcode</label>
+      <input id="login-passcode" type="password" inputmode="numeric" autocomplete="current-password" />
+    </div>
+    <button class="btn primary block" id="login-submit">Unlock</button>
+  </div>
+
+  <p id="auth-error"></p>
+</div>
+
+<!-- ================= App ================= -->
+<div id="app" class="hidden">
+
+  <div class="topbar">
+    <div>
+      <h1>School</h1>
+      <button class="term-switch" id="term-switch">
+        <span id="term-switch-label">No term selected</span>
+        <span aria-hidden="true">▾</span>
+      </button>
+    </div>
+    <button class="level-badge" id="level-badge" title="Points & streak">
+      <span id="level-name">Freshman Focus</span>
+      <strong id="level-points" class="mono">0</strong>
+    </button>
+  </div>
+
+  <main>
+    <!-- ---------- TODAY ---------- -->
+    <section class="view" id="view-today">
+      <div class="hero-clock">
+        <div>
+          <div class="time mono" id="clock-time">--:--</div>
+          <div class="date" id="clock-date">—</div>
+        </div>
+      </div>
+
+      <div class="stat-strip">
+        <div class="stat-chip"><div class="n mono" id="stat-classes-today">0</div><div class="l">Classes today</div></div>
+        <div class="stat-chip"><div class="n mono" id="stat-due-today">0</div><div class="l">Due today</div></div>
+        <div class="stat-chip"><div class="n mono" id="stat-overdue">0</div><div class="l">Overdue</div></div>
+      </div>
+
+      <div class="section-title">Today's classes</div>
+      <div class="flap-list" id="today-classes"></div>
+
+      <div class="section-title">Coming up</div>
+      <div class="flap-list" id="today-upcoming"></div>
+
+      <div class="section-title">This week's workload</div>
+      <div class="card" style="padding:12px;">
+        <div class="heatmap" id="workload-heatmap"></div>
+      </div>
+    </section>
+
+    <!-- ---------- SCHEDULE ---------- -->
+    <section class="view" id="view-schedule">
+      <div class="section-title">Weekly schedule</div>
+      <div id="schedule-week"></div>
+    </section>
+
+    <!-- ---------- ASSIGNMENTS ---------- -->
+    <section class="view" id="view-assignments">
+      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>Pending</span>
+        <button class="btn ghost" id="btn-syllabus-import" style="padding:6px 10px; font-size:12.5px;">Paste syllabus</button>
+      </div>
+      <div class="flap-list" id="assignments-pending"></div>
+      <div class="section-title">Completed</div>
+      <div class="flap-list" id="assignments-done"></div>
+    </section>
+
+    <!-- ---------- CALENDAR ---------- -->
+    <section class="view" id="view-calendar">
+      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <button class="btn ghost icon" id="cal-prev">‹</button>
+        <span id="cal-month-label" style="font-family:var(--font-display); font-weight:700;"></span>
+        <button class="btn ghost icon" id="cal-next">›</button>
+      </div>
+      <div class="month-grid" id="cal-grid"></div>
+      <div class="section-title">Selected day</div>
+      <div class="flap-list" id="cal-day-list"></div>
+    </section>
+
+    <!-- ---------- FOCUS ---------- -->
+    <section class="view" id="view-focus">
+      <div class="section-title">Focus timer</div>
+      <div class="card" style="padding:24px;">
+        <div class="focus-time mono" id="focus-time">25:00</div>
+        <div class="focus-ring-wrap">
+          <div class="text-muted small" id="focus-state">Ready when you are.</div>
+        </div>
+        <div class="focus-controls">
+          <button class="btn ghost" id="focus-minus">−5</button>
+          <button class="btn primary" id="focus-start">Start focus</button>
+          <button class="btn ghost" id="focus-plus">+5</button>
+        </div>
+        <p class="small text-muted mt-16" style="text-align:center;">While focus is running, assignment reminders are paused so you're not interrupted.</p>
+      </div>
+      <div class="streak-flame" id="focus-streak"></div>
+    </section>
+
+    <!-- ---------- SETTINGS ---------- -->
+    <section class="view" id="view-settings">
+      <div class="section-title">Terms</div>
+      <div class="settings-list" id="settings-terms"></div>
+      <button class="btn ghost block mt-8" id="btn-add-term">Add a term</button>
+
+      <div class="section-title">Notifications</div>
+      <div class="settings-list">
+        <div class="settings-row">
+          <div>
+            <div class="label">Push reminders</div>
+            <div class="sub" id="push-status-sub">Checking status…</div>
+          </div>
+          <button class="btn ghost" id="push-toggle-btn">Enable</button>
+        </div>
+        <div class="settings-row">
+          <div class="label">Remind me before due</div>
+          <div class="sub">Edit in the field below</div>
+        </div>
+      </div>
+      <div class="field mt-16">
+        <label for="reminder-offsets">Reminder times (minutes before due, comma separated)</label>
+        <input id="reminder-offsets" type="text" placeholder="1440, 60" />
+      </div>
+      <button class="btn ghost block" id="btn-send-test-push">Send test notification</button>
+
+      <div class="section-title">Appearance</div>
+      <div class="settings-list">
+        <div class="settings-row">
+          <div class="label">Theme</div>
+          <select id="theme-select" style="background:var(--surface-2); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:6px 8px;">
+            <option value="system">System</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section-title">Stats</div>
+      <div class="settings-list">
+        <div class="settings-row"><div class="label">Total points</div><div class="mono" id="settings-points">0</div></div>
+        <div class="settings-row"><div class="label">Current streak</div><div class="mono" id="settings-streak">0</div></div>
+        <div class="settings-row"><div class="label">Level</div><div id="settings-level">Freshman Focus</div></div>
+      </div>
+
+      <div class="section-title">Account</div>
+      <button class="btn danger block" id="btn-logout">Log out on this device</button>
+      <p class="small text-muted mt-8">Logging out doesn't delete your data — just log back in with your passcode on any device to see it again.</p>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-view="today" class="active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      Today
+    </button>
+    <button data-view="schedule">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 3v3M16 3v3"/></svg>
+      Schedule
+    </button>
+    <button data-view="assignments" style="position:relative;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Tasks
+      <span class="dot hidden" id="tasks-dot"></span>
+    </button>
+    <button data-view="calendar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/></svg>
+      Calendar
+    </button>
+    <button data-view="focus">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>
+      Focus
+    </button>
+    <button data-view="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 005 16.4a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 10a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 008 5.6a1.65 1.65 0 001-1.51V4a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9c.14.36.22.75.22 1.15"/></svg>
+      More
+    </button>
+  </nav>
+
+  <button class="fab hidden" id="fab-add">+</button>
+</div>
+
+<div id="toast-root"></div>
+<div id="sheet-root"></div>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

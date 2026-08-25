@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "school-app",
+  // Bump this whenever you redeploy long after setup — today's date is fine.
+  "compatibility_date": "2026-08-01",
+  "main": "src/index.js",
+
+  "assets": {
+    "directory": "./public/",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  "kv_namespaces": [
+    {
+      "binding": "SCHOOL_KV",
+      // Replace with the id printed by: wrangler kv namespace create SCHOOL_KV
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+
+  // Checks for due assignments every 15 minutes and sends push reminders.
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+
+  "vars": {
+    // Public VAPID key — safe to commit, not a secret.
+    // Fill this in after running: node scripts/generate-vapid-keys.mjs
+    "VAPID_PUBLIC_KEY": "",
+    // Shown to push services as the contact for this app; any email works.
+    "VAPID_SUBJECT": "mailto:you@example.com"
+  }
+
+  // VAPID_PRIVATE_JWK is a secret and does NOT go in this file.
+  // Set it with: wrangler secret put VAPID_PRIVATE_JWK
+}

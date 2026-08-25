@@ -1,0 +1,13 @@
+{
+  "name": "school-app-tests",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Dev-only regression tests -- not deployed with the app.",
+  "scripts": {
+    "test": "node e2e-test.mjs && node dom-smoke.mjs"
+  },
+  "dependencies": {
+    "jsdom": "^30.0.1"
+  }
+}
