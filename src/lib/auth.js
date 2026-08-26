@@ -1,7 +1,9 @@
 // Single-user passcode auth. No usernames, no accounts — just one shared
 // passcode that unlocks the same synced data from any device.
 
-const PBKDF2_ITERATIONS = 210000;
+// Cloudflare Workers' WebCrypto implementation caps PBKDF2 at 100,000
+// iterations (browsers/Node allow much higher) — this is the max allowed.
+const PBKDF2_ITERATIONS = 100000;
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year
 
 function b64urlEncode(buf) {

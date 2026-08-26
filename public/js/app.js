@@ -21,7 +21,7 @@ const state = {
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Mon..Sun
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
-const CLASS_COLORS = ["#5B8DEF", "#EF6A5B", "#5BCB77", "#F2B84B", "#B15BEF", "#3EC6C0", "#EF5B9C"];
+const CLASS_COLORS = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#00C7BE", "#30B0C7", "#007AFF", "#5856D6", "#AF52DE", "#FF2D55"];
 
 let focusTimer = null;
 let wakeLock = null;
@@ -221,16 +221,12 @@ function switchView(name) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
 
-  const fab = document.getElementById("fab-add");
-  if (name === "schedule" || name === "assignments") {
-    fab.classList.remove("hidden");
-  } else {
-    fab.classList.add("hidden");
-  }
+  const addBtn = document.getElementById("topbar-add");
+  addBtn.classList.toggle("hidden", name !== "schedule" && name !== "assignments");
 }
 
 function wireFab() {
-  document.getElementById("fab-add").addEventListener("click", () => {
+  document.getElementById("topbar-add").addEventListener("click", () => {
     if (!state.activeTermId) return openTermSheet(null);
     if (state.currentView === "schedule") openClassSheet(null);
     else if (state.currentView === "assignments") openAssignmentSheet(null);
@@ -373,24 +369,30 @@ function emptyState(glyph, title, sub) {
   return `<div class="empty-state"><div class="glyph">${glyph}</div><p><strong>${escapeHtml(title)}</strong></p><p>${escapeHtml(sub)}</p></div>`;
 }
 
-function classFlapRow(c, i) {
-  return `<div class="flap-row flap-in" style="--rail:${c.color}; animation-delay:${i * 0.04}s" data-class-id="${c.id}">
-    <div class="flap-time mono">${timeStrToLabel(c.startTime)}</div>
-    <div class="flap-body">
-      <div class="flap-title">${escapeHtml(c.title)}</div>
-      <div class="flap-sub">${escapeHtml(c.location || c.instructor || "")}</div>
+const CHEVRON_SVG = `<svg viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l6 6-6 6"/></svg>`;
+const CHECK_SVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>`;
+
+function classFlapRow(c) {
+  return `<div class="list-row" data-class-id="${c.id}">
+    <span class="row-dot" style="--dot:${c.color}"></span>
+    <div class="row-time rounded">${timeStrToLabel(c.startTime)}</div>
+    <div class="row-body">
+      <div class="row-title">${escapeHtml(c.title)}</div>
+      <div class="row-sub">${escapeHtml(c.location || c.instructor || "")}</div>
     </div>
+    <span class="chevron">${CHEVRON_SVG}</span>
   </div>`;
 }
 
-function assignmentFlapRow(a, i) {
+function assignmentFlapRow(a) {
   const cls = a.classId ? classById(a.classId) : null;
   const due = dueLabel(a.dueDate);
-  return `<div class="flap-row flap-in assignment-row${a.status === "done" ? " done" : ""}" style="--rail:${cls ? cls.color : "var(--text-muted)"}; animation-delay:${i * 0.04}s" data-assignment-id="${a.id}">
-    <button class="check" data-toggle-complete="${a.id}" aria-label="Mark complete">✓</button>
-    <div class="flap-body">
-      <div class="flap-title"><span class="priority-dot priority-${a.priority}"></span>${escapeHtml(a.title)}</div>
-      <div class="flap-sub">${cls ? escapeHtml(cls.title) + " · " : ""}${due.text}${due.overdue && a.status !== "done" ? " · overdue" : ""}</div>
+  const overdue = due.overdue && a.status !== "done";
+  return `<div class="list-row assignment-row${a.status === "done" ? " done" : ""}" data-assignment-id="${a.id}">
+    <button class="check" data-toggle-complete="${a.id}" aria-label="Mark complete">${CHECK_SVG}</button>
+    <div class="row-body">
+      <div class="row-title"><span class="priority-dot priority-${a.priority}"></span>${escapeHtml(a.title)}</div>
+      <div class="row-sub${overdue ? " overdue" : ""}">${cls ? escapeHtml(cls.title) + " · " : ""}${due.text}</div>
     </div>
   </div>`;
 }
@@ -452,7 +454,7 @@ function renderSchedule() {
   for (const dow of DAY_ORDER) {
     const dayClasses = state.classes.filter((c) => c.days.includes(dow)).sort((a, b) => a.startTime.localeCompare(b.startTime));
     if (dayClasses.length === 0) continue;
-    html += `<div class="section-title">${DAY_NAMES[dow]}</div><div class="flap-list">`;
+    html += `<div class="section-title">${DAY_NAMES[dow]}</div><div class="list-card">`;
     html += dayClasses.map((c, i) => classFlapRow(c, i)).join("");
     html += `</div>`;
   }
@@ -706,14 +708,14 @@ function renderSyllabusResults(rows) {
       ${rows
         .map(
           (r, i) => `
-        <div class="card" style="padding:10px; margin-bottom:8px;" data-row="${i}">
+        <div class="list-card" style="padding:10px; margin-bottom:8px;" data-row="${i}">
           <div style="display:flex; gap:8px; align-items:center;">
             <input type="checkbox" checked data-syl-include="${i}" />
-            <input type="text" value="${escapeHtml(r.title)}" data-syl-title="${i}" style="flex:1; background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:6px 8px; color:var(--text);" />
+            <input type="text" value="${escapeHtml(r.title)}" data-syl-title="${i}" style="flex:1; background:var(--surface-2); border:none; border-radius:9px; padding:6px 8px; color:var(--text);" />
           </div>
           <div style="display:flex; gap:8px; margin-top:8px;">
-            <input type="datetime-local" value="${toDatetimeLocalValue(new Date(r.date))}" data-syl-date="${i}" style="flex:1; background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:6px 8px; color:var(--text);" />
-            <select data-syl-class="${i}" style="background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:6px 8px; color:var(--text);">
+            <input type="datetime-local" value="${toDatetimeLocalValue(new Date(r.date))}" data-syl-date="${i}" style="flex:1; background:var(--surface-2); border:none; border-radius:9px; padding:6px 8px; color:var(--text);" />
+            <select data-syl-class="${i}" style="background:var(--surface-2); border:none; border-radius:9px; padding:6px 8px; color:var(--text);">
               <option value="">No class</option>
               ${state.classes.map((c) => `<option value="${c.id}">${escapeHtml(c.title)}</option>`).join("")}
             </select>
@@ -777,10 +779,10 @@ function renderCalendar() {
       .slice(0, 4)
       .map((a) => {
         const cls = a.classId ? classById(a.classId) : null;
-        return `<span style="background:${cls ? cls.color : "var(--text-muted)"}"></span>`;
+        return `<span style="background:${cls ? cls.color : "var(--accent)"}"></span>`;
       })
       .join("");
-    html += `<div class="month-cell${inMonth ? "" : " other-month"}${isSameDay(cellDate, today) ? " today" : ""}" data-date="${cellDate.toISOString()}">
+    html += `<div class="month-cell${inMonth ? "" : " other-month"}${isSameDay(cellDate, today) ? " today" : ""}${isSameDay(cellDate, state.calSelected) ? " selected" : ""}" data-date="${cellDate.toISOString()}">
       <div class="n">${cellDate.getDate()}</div>
       <div class="dots">${dots}</div>
     </div>`;
@@ -791,8 +793,8 @@ function renderCalendar() {
     cell.addEventListener("click", () => {
       state.calSelected = new Date(cell.dataset.date);
       renderCalendarDayList();
-      grid.querySelectorAll(".month-cell").forEach((c) => (c.style.outline = ""));
-      cell.style.outline = "2px solid var(--signal)";
+      grid.querySelectorAll(".month-cell").forEach((c) => c.classList.remove("selected"));
+      cell.classList.add("selected");
     });
   });
 
@@ -1131,5 +1133,5 @@ function applyTheme() {
     effective = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
   }
   document.documentElement.setAttribute("data-theme", effective);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", effective === "dark" ? "#12151c" : "#f3f1ec");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", effective === "dark" ? "#000000" : "#f2f2f7");
 }

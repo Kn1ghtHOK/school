@@ -6,7 +6,7 @@
 <title>School</title>
 
 <link rel="manifest" href="/manifest.json" />
-<meta name="theme-color" content="#12151c" />
+<meta name="theme-color" content="#000000" />
 
 <!-- iOS home-screen / standalone-mode support -->
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -58,10 +58,15 @@
         <span aria-hidden="true">▾</span>
       </button>
     </div>
-    <button class="level-badge" id="level-badge" title="Points & streak">
-      <span id="level-name">Freshman Focus</span>
-      <strong id="level-points" class="mono">0</strong>
-    </button>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <button class="topbar-add hidden" id="topbar-add" aria-label="Add">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="level-badge" id="level-badge" title="Points & streak">
+        <span id="level-name">Freshman Focus</span>
+        <strong id="level-points" class="rounded">0</strong>
+      </button>
+    </div>
   </div>
 
   <main>
@@ -69,25 +74,25 @@
     <section class="view" id="view-today">
       <div class="hero-clock">
         <div>
-          <div class="time mono" id="clock-time">--:--</div>
+          <div class="time rounded" id="clock-time">--:--</div>
           <div class="date" id="clock-date">—</div>
         </div>
       </div>
 
       <div class="stat-strip">
-        <div class="stat-chip"><div class="n mono" id="stat-classes-today">0</div><div class="l">Classes today</div></div>
-        <div class="stat-chip"><div class="n mono" id="stat-due-today">0</div><div class="l">Due today</div></div>
-        <div class="stat-chip"><div class="n mono" id="stat-overdue">0</div><div class="l">Overdue</div></div>
+        <div class="stat-chip"><div class="n rounded" id="stat-classes-today">0</div><div class="l">Classes today</div></div>
+        <div class="stat-chip"><div class="n rounded" id="stat-due-today">0</div><div class="l">Due today</div></div>
+        <div class="stat-chip"><div class="n rounded" id="stat-overdue">0</div><div class="l">Overdue</div></div>
       </div>
 
       <div class="section-title">Today's classes</div>
-      <div class="flap-list" id="today-classes"></div>
+      <div class="list-card" id="today-classes"></div>
 
       <div class="section-title">Coming up</div>
-      <div class="flap-list" id="today-upcoming"></div>
+      <div class="list-card" id="today-upcoming"></div>
 
       <div class="section-title">This week's workload</div>
-      <div class="card" style="padding:12px;">
+      <div class="list-card" style="padding:12px;">
         <div class="heatmap" id="workload-heatmap"></div>
       </div>
     </section>
@@ -104,9 +109,9 @@
         <span>Pending</span>
         <button class="btn ghost" id="btn-syllabus-import" style="padding:6px 10px; font-size:12.5px;">Paste syllabus</button>
       </div>
-      <div class="flap-list" id="assignments-pending"></div>
+      <div class="list-card" id="assignments-pending"></div>
       <div class="section-title">Completed</div>
-      <div class="flap-list" id="assignments-done"></div>
+      <div class="list-card" id="assignments-done"></div>
     </section>
 
     <!-- ---------- CALENDAR ---------- -->
@@ -118,14 +123,14 @@
       </div>
       <div class="month-grid" id="cal-grid"></div>
       <div class="section-title">Selected day</div>
-      <div class="flap-list" id="cal-day-list"></div>
+      <div class="list-card" id="cal-day-list"></div>
     </section>
 
     <!-- ---------- FOCUS ---------- -->
     <section class="view" id="view-focus">
       <div class="section-title">Focus timer</div>
-      <div class="card" style="padding:24px;">
-        <div class="focus-time mono" id="focus-time">25:00</div>
+      <div class="list-card" style="padding:24px;">
+        <div class="focus-time rounded" id="focus-time">25:00</div>
         <div class="focus-ring-wrap">
           <div class="text-muted small" id="focus-state">Ready when you are.</div>
         </div>
@@ -179,8 +184,8 @@
 
       <div class="section-title">Stats</div>
       <div class="settings-list">
-        <div class="settings-row"><div class="label">Total points</div><div class="mono" id="settings-points">0</div></div>
-        <div class="settings-row"><div class="label">Current streak</div><div class="mono" id="settings-streak">0</div></div>
+        <div class="settings-row"><div class="label">Total points</div><div class="rounded" id="settings-points">0</div></div>
+        <div class="settings-row"><div class="label">Current streak</div><div class="rounded" id="settings-streak">0</div></div>
         <div class="settings-row"><div class="label">Level</div><div id="settings-level">Freshman Focus</div></div>
       </div>
 
@@ -218,7 +223,6 @@
     </button>
   </nav>
 
-  <button class="fab hidden" id="fab-add">+</button>
 </div>
 
 <div id="toast-root"></div>

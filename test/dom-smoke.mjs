@@ -83,7 +83,7 @@ assert(document.getElementById('term-switch-label').textContent === 'Fall 2026',
 // ---- Add a class ----
 document.querySelectorAll('.tabbar button')[1].click(); // schedule tab
 await new Promise((r) => setTimeout(r, 50));
-document.getElementById('fab-add').click();
+document.getElementById('topbar-add').click();
 await new Promise((r) => setTimeout(r, 50));
 document.getElementById('cls-title').value = 'CS 201';
 document.querySelector('#cls-days button[data-day="1"]').click();
@@ -97,7 +97,7 @@ assert(document.getElementById('schedule-week').textContent.includes('CS 201'), 
 // ---- Add an assignment ----
 document.querySelectorAll('.tabbar button')[2].click(); // assignments tab
 await new Promise((r) => setTimeout(r, 50));
-document.getElementById('fab-add').click();
+document.getElementById('topbar-add').click();
 await new Promise((r) => setTimeout(r, 50));
 document.getElementById('asg-title').value = 'Essay 1';
 document.getElementById('asg-save').click();
