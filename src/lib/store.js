@@ -25,6 +25,7 @@ export const keys = {
   terms: () => "terms",
   activeTermId: () => "activeTermId",
   schedule: (termId) => `schedule:${termId}`,
+  daySchedule: (termId) => `dayschedule:${termId}`,
   assignments: (termId) => `assignments:${termId}`,
   notes: (classId) => `notes:${classId}`,
   pushSubs: () => "pushSubs",

@@ -10,6 +10,7 @@ const state = {
   activeTermId: null,
   classes: [],
   assignments: [],
+  daySchedule: {},
   points: { total: 0, streak: 0, level: { name: "Freshman Focus", next: null } },
   settings: { reminderOffsetsMinutes: [1440, 60], theme: "system" },
   focus: { until: null },
@@ -21,7 +22,22 @@ const state = {
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Mon..Sun
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
-const CLASS_COLORS = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#00C7BE", "#30B0C7", "#007AFF", "#5856D6", "#AF52DE", "#FF2D55"];
+
+// Nav items — rendered into both the bottom tab bar (phone) and the left
+// sidebar (wider / desktop windows). Declared here, above boot(), since
+// boot() synchronously calls renderNav() before any await.
+const NAV_ITEMS = [
+  { view: "today", label: "Today", svg: `<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>` },
+  { view: "schedule", label: "Schedule", svg: `<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 3v3M16 3v3"/>` },
+  { view: "assignments", label: "Tasks", svg: `<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>`, dot: true },
+  { view: "calendar", label: "Calendar", svg: `<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/>` },
+  { view: "focus", label: "Focus", svg: `<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>` },
+  {
+    view: "settings",
+    label: "More",
+    svg: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 005 16.4a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 10a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 008 5.6a1.65 1.65 0 001-1.51V4a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9c.14.36.22.75.22 1.15"/>`,
+  },
+];
 
 let focusTimer = null;
 let wakeLock = null;
@@ -150,14 +166,17 @@ async function loadTermScopedData() {
   if (!state.activeTermId) {
     state.classes = [];
     state.assignments = [];
+    state.daySchedule = {};
     return;
   }
-  const [{ classes }, { assignments }] = await Promise.all([
+  const [{ classes }, { assignments }, { daySchedule }] = await Promise.all([
     api.listClasses(state.activeTermId),
     api.listAssignments(state.activeTermId),
+    api.getDaySchedule(state.activeTermId),
   ]);
   state.classes = classes;
   state.assignments = assignments;
+  state.daySchedule = daySchedule;
 }
 
 function activeTerm() {
@@ -166,6 +185,34 @@ function activeTerm() {
 
 function classById(id) {
   return state.classes.find((c) => c.id === id) || null;
+}
+
+function classByPeriod(periodLabel) {
+  return state.classes.find((c) => c.period === periodLabel) || null;
+}
+
+/** Ordered list of { period, start, end } slots for a weekday, or [] if no school that day / not configured yet. */
+function periodsForWeekday(dow) {
+  const day = state.daySchedule[String(dow)];
+  return Array.isArray(day) ? day : [];
+}
+
+/** This weekday's period slots, each paired with its matched class (or null if unassigned), in time order. */
+function scheduleForWeekday(dow) {
+  return periodsForWeekday(dow)
+    .map((slot) => ({ ...slot, cls: classByPeriod(slot.period) }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+}
+
+/** All distinct period labels currently defined anywhere in the day schedule, in first-seen order. */
+function knownPeriodLabels() {
+  const seen = [];
+  for (const dow of DAY_ORDER) {
+    for (const slot of periodsForWeekday(dow)) {
+      if (!seen.includes(slot.period)) seen.push(slot.period);
+    }
+  }
+  return seen;
 }
 
 // ===========================================================
@@ -189,14 +236,34 @@ function renderTopbar() {
 
   const dueToday = state.assignments.filter((a) => a.status !== "done" && isSameDay(new Date(a.dueDate), new Date())).length;
   const overdue = state.assignments.filter((a) => a.status !== "done" && new Date(a.dueDate) < new Date()).length;
-  document.getElementById("tasks-dot").classList.toggle("hidden", dueToday + overdue === 0);
+  document.querySelectorAll(".tasks-dot").forEach((d) => d.classList.toggle("hidden", dueToday + overdue === 0));
+}
+
+// ===========================================================
+// Navigation — one set of items rendered into both the bottom
+// tab bar (phone) and the left sidebar (wider / desktop windows)
+// ===========================================================
+function navButtonHTML(item) {
+  return `<button class="nav-item" data-view="${item.view}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${item.svg}</svg>
+    <span>${item.label}</span>
+    ${item.dot ? `<span class="dot tasks-dot hidden"></span>` : ""}
+  </button>`;
+}
+
+function renderNav() {
+  document.getElementById("tabbar").innerHTML = NAV_ITEMS.map(navButtonHTML).join("");
+  const sidebar = document.getElementById("sidebar");
+  sidebar.querySelectorAll(".nav-item").forEach((b) => b.remove());
+  sidebar.insertAdjacentHTML("beforeend", NAV_ITEMS.map(navButtonHTML).join(""));
 }
 
 // ===========================================================
 // Tabbar / view switching
 // ===========================================================
 function wireTabbar() {
-  document.querySelectorAll(".tabbar button").forEach((btn) => {
+  renderNav();
+  document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => {
       location.hash = btn.dataset.view;
     });
@@ -219,7 +286,7 @@ function handleHashRoute() {
 function switchView(name) {
   state.currentView = name;
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
-  document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
+  document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
 
   const addBtn = document.getElementById("topbar-add");
   addBtn.classList.toggle("hidden", name !== "schedule" && name !== "assignments");
@@ -328,11 +395,11 @@ function renderToday() {
   }
 
   const todayDow = new Date().getDay();
-  const todaysClasses = state.classes.filter((c) => c.days.includes(todayDow)).sort((a, b) => a.startTime.localeCompare(b.startTime));
+  const todaysClasses = scheduleForWeekday(todayDow).filter((s) => s.cls);
 
   classesEl.innerHTML = todaysClasses.length
-    ? todaysClasses.map((c, i) => classFlapRow(c, i)).join("")
-    : emptyState("☀️", "No classes today", "Enjoy the free day.");
+    ? todaysClasses.map((s) => classFlapRow(s)).join("")
+    : emptyState("☀️", "No classes today", periodsForWeekday(todayDow).length ? "Free periods today." : "Enjoy the free day.");
 
   const pending = state.assignments.filter((a) => a.status !== "done").sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
   const upcoming = pending.slice(0, 6);
@@ -371,14 +438,25 @@ function emptyState(glyph, title, sub) {
 
 const CHEVRON_SVG = `<svg viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l6 6-6 6"/></svg>`;
 const CHECK_SVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>`;
+const CLOSE_SVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
 
-function classFlapRow(c) {
+function classFlapRow(slot) {
+  const timeLabel = timeStrToLabel(slot.start);
+  if (!slot.cls) {
+    return `<div class="list-row" data-empty-period="${escapeHtml(slot.period)}">
+      <div class="row-time rounded">${timeLabel}</div>
+      <div class="row-body">
+        <div class="row-title" style="color:var(--text-tertiary)">Period ${escapeHtml(slot.period)} — tap to add a class</div>
+      </div>
+      <span class="chevron">${CHEVRON_SVG}</span>
+    </div>`;
+  }
+  const c = slot.cls;
   return `<div class="list-row" data-class-id="${c.id}">
-    <span class="row-dot" style="--dot:${c.color}"></span>
-    <div class="row-time rounded">${timeStrToLabel(c.startTime)}</div>
+    <div class="row-time rounded">${timeLabel}</div>
     <div class="row-body">
       <div class="row-title">${escapeHtml(c.title)}</div>
-      <div class="row-sub">${escapeHtml(c.location || c.instructor || "")}</div>
+      <div class="row-sub">${escapeHtml(c.location || c.instructor || `Period ${slot.period}`)}</div>
     </div>
     <span class="chevron">${CHEVRON_SVG}</span>
   </div>`;
@@ -404,6 +482,9 @@ function bindFlapRowClicks(...containers) {
         if (e.target.closest("[data-toggle-complete]")) return;
         openClassSheet(classById(row.dataset.classId));
       });
+    });
+    container.querySelectorAll("[data-empty-period]").forEach((row) => {
+      row.addEventListener("click", () => openClassSheet(null, { prefillPeriod: row.dataset.emptyPeriod }));
     });
     container.querySelectorAll("[data-assignment-id]").forEach((row) => {
       row.addEventListener("click", (e) => {
@@ -446,16 +527,16 @@ function renderSchedule() {
     el.innerHTML = emptyState("🗓️", "No term yet", "Add a term in Settings, then build your weekly schedule here.");
     return;
   }
-  if (state.classes.length === 0) {
-    el.innerHTML = emptyState("➕", "No classes yet", "Tap the + button to add your first class, or paste a syllabus from the Tasks tab.");
+  const configuredDays = DAY_ORDER.filter((dow) => periodsForWeekday(dow).length > 0);
+  if (configuredDays.length === 0) {
+    el.innerHTML = emptyState("🔔", "Set up your bell schedule", "Tap \"Edit bell schedule\" above to enter which periods meet on each day — then you can assign classes to periods.");
     return;
   }
   let html = "";
-  for (const dow of DAY_ORDER) {
-    const dayClasses = state.classes.filter((c) => c.days.includes(dow)).sort((a, b) => a.startTime.localeCompare(b.startTime));
-    if (dayClasses.length === 0) continue;
+  for (const dow of configuredDays) {
+    const slots = scheduleForWeekday(dow);
     html += `<div class="section-title">${DAY_NAMES[dow]}</div><div class="list-card">`;
-    html += dayClasses.map((c, i) => classFlapRow(c, i)).join("");
+    html += slots.map((s) => classFlapRow(s)).join("");
     html += `</div>`;
   }
   el.innerHTML = html;
@@ -463,37 +544,186 @@ function renderSchedule() {
 }
 
 function wireScheduleView() {
-  // class sheet opened via bindFlapRowClicks / FAB
+  document.getElementById("btn-edit-dayschedule").addEventListener("click", () => {
+    if (!state.activeTermId) return toast("Add a term first.");
+    openDayScheduleOverviewSheet();
+  });
 }
 
-function openClassSheet(cls) {
+// ---- Bell schedule (day schedule) editor ----
+function openDayScheduleOverviewSheet() {
+  const rows = DAY_ORDER.map((dow) => {
+    const raw = state.daySchedule[String(dow)];
+    const configured = raw !== undefined;
+    const slots = Array.isArray(raw) ? raw : [];
+    let sub;
+    if (!configured) sub = "Not set up";
+    else if (slots.length === 0) sub = "No school";
+    else {
+      const first = [...slots].sort((a, b) => a.start.localeCompare(b.start))[0];
+      sub = `${slots.length} period${slots.length === 1 ? "" : "s"}, starts ${timeStrToLabel(first.start)}`;
+    }
+    return `<div class="settings-row" style="cursor:pointer;" data-edit-day="${dow}">
+      <div>
+        <div class="label">${DAY_NAMES[dow]}</div>
+        <div class="sub">${sub}</div>
+      </div>
+      <span class="chevron">${CHEVRON_SVG}</span>
+    </div>`;
+  }).join("");
+
+  openSheet(
+    `
+    <h2>Bell schedule</h2>
+    <p class="small" style="color:var(--text-secondary); margin:-8px 0 14px;">Set which periods meet each day, and their times. When you add a class you'll just pick a period — the days and times come from here, so a period that isn't scheduled on a given day (like Wednesdays) simply won't show a class that day.</p>
+    <div class="settings-list">${rows}</div>
+    <button class="btn ghost block mt-16" id="dayschedule-done">Done</button>
+  `,
+    {
+      onMount: (root) => {
+        root.querySelectorAll("[data-edit-day]").forEach((row) => {
+          row.addEventListener("click", () => openDayEditorSheet(Number(row.dataset.editDay)));
+        });
+        root.querySelector("#dayschedule-done").addEventListener("click", closeSheet);
+      },
+    }
+  );
+}
+
+function openDayEditorSheet(dow) {
+  const existing = state.daySchedule[String(dow)];
+  let periods = Array.isArray(existing) ? existing.map((p) => ({ ...p })) : [];
+  let noSchool = existing === null;
+
+  const otherDaysWithData = DAY_ORDER.filter(
+    (d) => d !== dow && Array.isArray(state.daySchedule[String(d)]) && state.daySchedule[String(d)].length > 0
+  );
+
+  function rowsHTML() {
+    if (periods.length === 0) {
+      return `<p class="small" style="color:var(--text-tertiary); padding:6px 2px 10px;">No periods yet — add one below.</p>`;
+    }
+    return periods
+      .map(
+        (p, i) => `
+      <div class="period-row" data-idx="${i}">
+        <input type="text" class="period-label" data-field="period" value="${escapeHtml(p.period)}" placeholder="1" />
+        <input type="time" data-field="start" value="${p.start || ""}" />
+        <input type="time" data-field="end" value="${p.end || ""}" />
+        <button type="button" class="period-remove" data-remove="${i}" aria-label="Remove period">${CLOSE_SVG}</button>
+      </div>`
+      )
+      .join("");
+  }
+
+  openSheet(
+    `
+    <h2>${DAY_NAMES[dow]}</h2>
+    <div class="settings-row" style="padding:2px 0 16px; background:none;">
+      <div class="label">School meets this day</div>
+      <label class="switch"><input type="checkbox" id="day-meets" ${noSchool ? "" : "checked"} /><span class="track"></span></label>
+    </div>
+    <div id="day-periods-wrap" class="${noSchool ? "hidden" : ""}">
+      ${
+        otherDaysWithData.length
+          ? `<div class="field">
+        <label>Copy from another day</label>
+        <select id="day-copy-from">
+          <option value="">— choose a day —</option>
+          ${otherDaysWithData.map((d) => `<option value="${d}">${DAY_NAMES[d]}</option>`).join("")}
+        </select>
+      </div>`
+          : ""
+      }
+      <label style="font-size:12.5px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:8px;">Periods, in order</label>
+      <div id="period-rows">${rowsHTML()}</div>
+      <button type="button" class="btn ghost block mt-8" id="add-period">+ Add period</button>
+    </div>
+    <div class="sheet-actions mt-16">
+      <button class="btn ghost" id="day-cancel">Cancel</button>
+      <button class="btn primary block" id="day-save">Save</button>
+    </div>
+  `,
+    {
+      onMount: (root) => {
+        const wrap = root.querySelector("#day-periods-wrap");
+        const rowsEl = root.querySelector("#period-rows");
+
+        function refreshRows() {
+          rowsEl.innerHTML = rowsHTML();
+        }
+
+        root.querySelector("#day-meets").addEventListener("change", (e) => {
+          noSchool = !e.target.checked;
+          wrap.classList.toggle("hidden", noSchool);
+        });
+
+        root.querySelector("#day-copy-from")?.addEventListener("change", (e) => {
+          if (!e.target.value) return;
+          periods = (state.daySchedule[e.target.value] || []).map((p) => ({ ...p }));
+          refreshRows();
+        });
+
+        root.querySelector("#add-period").addEventListener("click", () => {
+          periods.push({ period: "", start: "", end: "" });
+          refreshRows();
+        });
+
+        rowsEl.addEventListener("click", (e) => {
+          const btn = e.target.closest("[data-remove]");
+          if (!btn) return;
+          periods.splice(Number(btn.dataset.remove), 1);
+          refreshRows();
+        });
+
+        rowsEl.addEventListener("input", (e) => {
+          const rowEl = e.target.closest("[data-idx]");
+          const field = e.target.dataset.field;
+          if (!rowEl || !field) return;
+          periods[Number(rowEl.dataset.idx)][field] = e.target.value;
+        });
+
+        root.querySelector("#day-cancel").addEventListener("click", closeSheet);
+
+        root.querySelector("#day-save").addEventListener("click", async () => {
+          if (noSchool) {
+            await api.setDaySchedule(state.activeTermId, dow, null);
+          } else {
+            const cleaned = periods.map((p) => ({ period: p.period.trim(), start: p.start, end: p.end }));
+            if (cleaned.length === 0) return toast('Add at least one period, or turn off "School meets this day."');
+            if (cleaned.some((p) => !p.period)) return toast("Every period needs a label.");
+            if (cleaned.some((p) => !p.start || !p.end)) return toast("Every period needs a start and end time.");
+            await api.setDaySchedule(state.activeTermId, dow, cleaned);
+          }
+          await loadTermScopedData();
+          renderAll();
+          openDayScheduleOverviewSheet();
+        });
+      },
+    }
+  );
+}
+
+function openClassSheet(cls, { prefillPeriod } = {}) {
   const isEdit = Boolean(cls);
-  const days = cls?.days || [];
-  const color = cls?.color || CLASS_COLORS[state.classes.length % CLASS_COLORS.length];
+  const periodOptions = knownPeriodLabels();
+  const currentPeriod = cls?.period || prefillPeriod || "";
 
   openSheet(
     `
     <h2>${isEdit ? "Edit class" : "Add class"}</h2>
     <div class="field"><label>Class name</label><input type="text" id="cls-title" value="${escapeHtml(cls?.title || "")}" placeholder="Organic Chemistry" /></div>
+    <div class="field">
+      <label>Period</label>
+      <input type="text" id="cls-period" list="cls-period-options" value="${escapeHtml(currentPeriod)}" placeholder="e.g. 3, or WIN" />
+      <datalist id="cls-period-options">
+        ${periodOptions.map((p) => `<option value="${escapeHtml(p)}"></option>`).join("")}
+      </datalist>
+      <p class="small" style="color:var(--text-tertiary); margin:6px 2px 0;">Which days and times this meets comes from your bell schedule — set that up under Schedule → Edit bell schedule.</p>
+    </div>
     <div class="field-row">
       <div class="field"><label>Instructor</label><input type="text" id="cls-instructor" value="${escapeHtml(cls?.instructor || "")}" /></div>
       <div class="field"><label>Location</label><input type="text" id="cls-location" value="${escapeHtml(cls?.location || "")}" /></div>
-    </div>
-    <div class="field">
-      <label>Days</label>
-      <div class="day-picker" id="cls-days">
-        ${DAY_ORDER.map((d) => `<button type="button" data-day="${d}" class="${days.includes(d) ? "selected" : ""}">${DAY_SHORT[d]}</button>`).join("")}
-      </div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Starts</label><input type="time" id="cls-start" value="${cls?.startTime || "09:00"}" /></div>
-      <div class="field"><label>Ends</label><input type="time" id="cls-end" value="${cls?.endTime || "09:50"}" /></div>
-    </div>
-    <div class="field">
-      <label>Color</label>
-      <div class="color-picker" id="cls-color">
-        ${CLASS_COLORS.map((c) => `<button type="button" data-color="${c}" style="background:${c}" class="${c === color ? "selected" : ""}"></button>`).join("")}
-      </div>
     </div>
     <div class="field"><label>Notes</label><textarea id="cls-notes" placeholder="Syllabus links, office hours, textbook info…"></textarea></div>
     <div class="sheet-actions">
@@ -504,13 +734,6 @@ function openClassSheet(cls) {
   `,
     {
       onMount: async (root) => {
-        root.querySelectorAll("#cls-days button").forEach((b) => b.addEventListener("click", () => b.classList.toggle("selected")));
-        root.querySelectorAll("#cls-color button").forEach((b) =>
-          b.addEventListener("click", () => {
-            root.querySelectorAll("#cls-color button").forEach((x) => x.classList.remove("selected"));
-            b.classList.add("selected");
-          })
-        );
         root.querySelector("#cls-cancel").addEventListener("click", closeSheet);
 
         if (isEdit) {
@@ -529,18 +752,14 @@ function openClassSheet(cls) {
 
         root.querySelector("#cls-save").addEventListener("click", async () => {
           const title = document.getElementById("cls-title").value.trim();
+          const period = document.getElementById("cls-period").value.trim();
           if (!title) return toast("Class name is required.");
-          const selectedDays = [...root.querySelectorAll("#cls-days button.selected")].map((b) => Number(b.dataset.day));
-          if (selectedDays.length === 0) return toast("Pick at least one day.");
-          const selectedColor = root.querySelector("#cls-color button.selected")?.dataset.color || color;
+          if (!period) return toast("Period is required.");
           const payload = {
             title,
+            period,
             instructor: document.getElementById("cls-instructor").value.trim(),
             location: document.getElementById("cls-location").value.trim(),
-            days: selectedDays,
-            startTime: document.getElementById("cls-start").value,
-            endTime: document.getElementById("cls-end").value,
-            color: selectedColor,
           };
           let savedClass;
           if (isEdit) {
@@ -777,10 +996,7 @@ function renderCalendar() {
     const dueThatDay = state.assignments.filter((a) => isSameDay(new Date(a.dueDate), cellDate));
     const dots = dueThatDay
       .slice(0, 4)
-      .map((a) => {
-        const cls = a.classId ? classById(a.classId) : null;
-        return `<span style="background:${cls ? cls.color : "var(--accent)"}"></span>`;
-      })
+      .map(() => `<span></span>`)
       .join("");
     html += `<div class="month-cell${inMonth ? "" : " other-month"}${isSameDay(cellDate, today) ? " today" : ""}${isSameDay(cellDate, state.calSelected) ? " selected" : ""}" data-date="${cellDate.toISOString()}">
       <div class="n">${cellDate.getDate()}</div>
@@ -805,15 +1021,14 @@ function renderCalendarDayList() {
   const el = document.getElementById("cal-day-list");
   const d = state.calSelected;
   const dow = d.getDay();
-  const classesThatDay = state.classes.filter((c) => c.days.includes(dow)).sort((a, b) => a.startTime.localeCompare(b.startTime));
+  const classesThatDay = scheduleForWeekday(dow).filter((s) => s.cls);
   const assignmentsThatDay = state.assignments.filter((a) => isSameDay(new Date(a.dueDate), d));
 
   if (classesThatDay.length === 0 && assignmentsThatDay.length === 0) {
     el.innerHTML = emptyState("—", d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }), "Nothing scheduled.");
     return;
   }
-  el.innerHTML =
-    classesThatDay.map((c, i) => classFlapRow(c, i)).join("") + assignmentsThatDay.map((a, i) => assignmentFlapRow(a, i)).join("");
+  el.innerHTML = classesThatDay.map((s) => classFlapRow(s)).join("") + assignmentsThatDay.map((a) => assignmentFlapRow(a)).join("");
   bindFlapRowClicks(el);
 }
 

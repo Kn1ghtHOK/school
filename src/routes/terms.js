@@ -51,6 +51,7 @@ export async function remove(request, env, id) {
   await putJSON(env.SCHOOL_KV, keys.terms(), next);
   await env.SCHOOL_KV.delete(keys.schedule(id));
   await env.SCHOOL_KV.delete(keys.assignments(id));
+  await env.SCHOOL_KV.delete(keys.daySchedule(id));
 
   const activeTermId = await getJSON(env.SCHOOL_KV, keys.activeTermId(), null);
   if (activeTermId === id) {

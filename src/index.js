@@ -3,6 +3,7 @@ import { getBearerToken, checkSession } from "./lib/auth.js";
 import * as authRoutes from "./routes/auth.js";
 import * as terms from "./routes/terms.js";
 import * as schedule from "./routes/schedule.js";
+import * as dayschedule from "./routes/dayschedule.js";
 import * as assignments from "./routes/assignments.js";
 import * as notes from "./routes/notes.js";
 import * as push from "./routes/push.js";
@@ -28,6 +29,9 @@ const ROUTES = [
   ["POST", "/api/terms/:termId/schedule", schedule.create],
   ["PUT", "/api/terms/:termId/schedule/:classId", schedule.update],
   ["DELETE", "/api/terms/:termId/schedule/:classId", schedule.remove],
+
+  ["GET", "/api/terms/:termId/dayschedule", dayschedule.get],
+  ["PUT", "/api/terms/:termId/dayschedule/:weekday", dayschedule.setDay],
 
   ["GET", "/api/terms/:termId/assignments", assignments.list],
   ["POST", "/api/terms/:termId/assignments", assignments.create],

@@ -61,6 +61,10 @@ export const api = {
   updateClass: (termId, id, data) => request("PUT", `/api/terms/${termId}/schedule/${id}`, data),
   deleteClass: (termId, id) => request("DELETE", `/api/terms/${termId}/schedule/${id}`),
 
+  // day schedule (bell schedule matrix — which periods meet which weekday)
+  getDaySchedule: (termId) => request("GET", `/api/terms/${termId}/dayschedule`),
+  setDaySchedule: (termId, weekday, periods) => request("PUT", `/api/terms/${termId}/dayschedule/${weekday}`, { periods }),
+
   // assignments
   listAssignments: (termId) => request("GET", `/api/terms/${termId}/assignments`),
   createAssignment: (termId, data) => request("POST", `/api/terms/${termId}/assignments`, data),

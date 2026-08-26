@@ -64,14 +64,44 @@ assert(r.status === 200 && r.json.activeTermId === termId, 'first term auto-acti
 
 // --- Schedule ---
 r = await call('POST', `/api/terms/${termId}/schedule`, {
-  title: 'CS 201', instructor: 'Dr. Lee', location: 'Keller 3-180',
-  days: [1, 3, 5], startTime: '09:00', endTime: '09:50',
+  title: 'CS 201', instructor: 'Dr. Lee', location: 'Keller 3-180', period: '3',
 }, token);
 assert(r.status === 201, 'create class');
 const classId = r.json.class.id;
 
 r = await call('GET', `/api/terms/${termId}/schedule`, null, token);
 assert(r.json.classes.length === 1, 'schedule has 1 class');
+
+r = await call('POST', `/api/terms/${termId}/schedule`, { title: 'No period' }, token);
+assert(r.status === 400, 'class without a period is rejected');
+
+// --- Day schedule (bell schedule matrix) ---
+r = await call('GET', `/api/terms/${termId}/dayschedule`, null, token);
+assert(r.status === 200 && Object.keys(r.json.daySchedule).length === 0, 'day schedule starts empty');
+
+r = await call('PUT', `/api/terms/${termId}/dayschedule/2`, {
+  periods: [
+    { period: '1', start: '08:00', end: '08:50' },
+    { period: '3', start: '10:25', end: '11:15' },
+  ],
+}, token);
+assert(r.status === 200 && r.json.daySchedule['2'].length === 2, 'set Tuesday periods');
+
+r = await call('PUT', `/api/terms/${termId}/dayschedule/3`, {
+  periods: [{ period: '2', start: '09:35', end: '10:20' }],
+}, token);
+assert(r.status === 200, 'set Wednesday periods with a later start');
+
+r = await call('PUT', `/api/terms/${termId}/dayschedule/0`, { periods: null }, token);
+assert(r.status === 200 && r.json.daySchedule['0'] === null, 'Sunday set to no school');
+
+r = await call('PUT', `/api/terms/${termId}/dayschedule/9`, { periods: null }, token);
+assert(r.status === 400, 'invalid weekday rejected');
+
+r = await call('PUT', `/api/terms/${termId}/dayschedule/2`, {
+  periods: [{ period: '1', start: '8am', end: '08:50' }],
+}, token);
+assert(r.status === 400, 'invalid time format rejected');
 
 // --- Notes ---
 r = await call('PUT', `/api/classes/${classId}/notes`, { content: 'Bring calculator' }, token);

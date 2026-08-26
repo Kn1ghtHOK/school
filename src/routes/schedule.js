@@ -1,7 +1,10 @@
 import { json, err, readJSON } from "../lib/http.js";
 import { getJSON, putJSON, newId, keys } from "../lib/store.js";
 
-const COLORS = ["#5B8DEF", "#EF6A5B", "#5BCB77", "#F2B84B", "#B15BEF", "#3EC6C0", "#EF5B9C"];
+// A "class" is tied to a period label (e.g. "3", "WIN") rather than to
+// specific weekdays/times directly. Which days it actually meets, and at
+// what time, is derived from the term's day schedule (see dayschedule.js)
+// — whichever weekdays include that period.
 
 export async function list(request, env, termId) {
   const classes = await getJSON(env.SCHOOL_KV, keys.schedule(termId), []);
@@ -10,21 +13,17 @@ export async function list(request, env, termId) {
 
 export async function create(request, env, termId) {
   const body = await readJSON(request);
-  if (!body.title || !Array.isArray(body.days) || body.days.length === 0) {
-    return err("title and at least one day are required.", 400);
+  if (!body.title || !String(body.period || "").trim()) {
+    return err("title and period are required.", 400);
   }
-  if (!body.startTime || !body.endTime) return err("startTime and endTime are required.", 400);
 
   const classes = await getJSON(env.SCHOOL_KV, keys.schedule(termId), []);
   const cls = {
     id: newId(),
     title: String(body.title),
+    period: String(body.period).trim(),
     instructor: body.instructor || "",
     location: body.location || "",
-    days: body.days.map(Number),
-    startTime: body.startTime,
-    endTime: body.endTime,
-    color: body.color || COLORS[classes.length % COLORS.length],
     createdAt: Date.now(),
   };
   classes.push(cls);

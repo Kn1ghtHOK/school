@@ -50,6 +50,14 @@
 <!-- ================= App ================= -->
 <div id="app" class="hidden">
 
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <img src="/icons/icon-192.png" alt="" />
+      <span>School</span>
+    </div>
+  </nav>
+
+  <div class="app-content">
   <div class="topbar">
     <div>
       <h1>School</h1>
@@ -99,7 +107,10 @@
 
     <!-- ---------- SCHEDULE ---------- -->
     <section class="view" id="view-schedule">
-      <div class="section-title">Weekly schedule</div>
+      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>Weekly schedule</span>
+        <button class="btn ghost" id="btn-edit-dayschedule" style="padding:6px 10px; font-size:12.5px;">Edit bell schedule</button>
+      </div>
       <div id="schedule-week"></div>
     </section>
 
@@ -194,34 +205,9 @@
       <p class="small text-muted mt-8">Logging out doesn't delete your data — just log back in with your passcode on any device to see it again.</p>
     </section>
   </main>
+  </div>
 
-  <nav class="tabbar">
-    <button data-view="today" class="active">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
-      Today
-    </button>
-    <button data-view="schedule">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 3v3M16 3v3"/></svg>
-      Schedule
-    </button>
-    <button data-view="assignments" style="position:relative;">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-      Tasks
-      <span class="dot hidden" id="tasks-dot"></span>
-    </button>
-    <button data-view="calendar">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/></svg>
-      Calendar
-    </button>
-    <button data-view="focus">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>
-      Focus
-    </button>
-    <button data-view="settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 005 16.4a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 10a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 008 5.6a1.65 1.65 0 001-1.51V4a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9c.14.36.22.75.22 1.15"/></svg>
-      More
-    </button>
-  </nav>
+  <nav class="tabbar" id="tabbar"></nav>
 
 </div>
 

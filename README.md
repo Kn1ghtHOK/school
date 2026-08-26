@@ -9,8 +9,12 @@ no monthly bill.
 
 - **Today view** — a live clock, today's classes, what's coming up, and a
   7-day workload heatmap.
-- **Weekly schedule** — recurring classes with day/time/room/instructor,
-  color-coded, plus free-form notes per class.
+- **Weekly schedule** — a period-based bell schedule (like a real school's
+  block/rotating schedule): you define which periods meet on each weekday
+  and at what time, then classes just pick a period. A class only shows up
+  on the days its period is actually scheduled — so a Wednesday with a
+  shorter, later-starting day naturally shows fewer classes than a full
+  Tuesday, with no per-day duplicate data entry.
 - **Assignment tracking** — due dates, priority, notes, one-tap complete.
 - **Real push notifications** — configurable reminders (default: 1 day and
   1 hour before due) delivered via the standard Web Push protocol, plus a
@@ -146,8 +150,15 @@ on — no extra setup per device beyond tapping "Enable" once on each.
 
 - **Add a term first** (Settings → Terms → Add a term) — everything else
   is scoped to a term, so this unlocks the rest of the app.
-- **Build your weekly schedule** in the Schedule tab: tap **+**, pick the
-  days it meets, start/end time, and a color.
+- **Set up your bell schedule next**, in the Schedule tab → **Edit bell
+  schedule**. For each weekday, list the periods that meet and their
+  times (or mark it "no school"). This is what makes a rotating/block
+  schedule work — e.g. a normal day might have periods 1–7 plus a WIN
+  period, while Wednesday only has WIN/2/4/6 starting later. There's a
+  "copy from another day" shortcut for days that repeat the same pattern.
+- **Then add classes** in the Schedule tab: each one just picks a period
+  (e.g. "3" or "WIN") — which days and times it meets comes from the bell
+  schedule automatically.
 - **Add assignments** from the Tasks tab, or paste a syllabus schedule
   block with **Paste syllabus** and review what it finds before importing.
 - **Reminder timing** is set in Settings → Notifications (minutes before

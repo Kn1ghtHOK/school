@@ -80,14 +80,35 @@ await new Promise((r) => setTimeout(r, 300));
 assert(errors.length === 0, `no runtime errors after adding term (got: ${JSON.stringify(errors)})`);
 assert(document.getElementById('term-switch-label').textContent === 'Fall 2026', 'active term label updated');
 
-// ---- Add a class ----
+// ---- Set up bell schedule (Tuesday: period 3) ----
 document.querySelectorAll('.tabbar button')[1].click(); // schedule tab
 await new Promise((r) => setTimeout(r, 50));
+document.getElementById('btn-edit-dayschedule').click();
+await new Promise((r) => setTimeout(r, 50));
+assert(errors.length === 0, `no runtime errors opening bell schedule overview (got: ${JSON.stringify(errors)})`);
+document.querySelector('[data-edit-day="2"]').click(); // Tuesday
+await new Promise((r) => setTimeout(r, 50));
+document.getElementById('add-period').click();
+await new Promise((r) => setTimeout(r, 50));
+let periodRow = document.querySelector('#period-rows [data-idx="0"]');
+periodRow.querySelector('[data-field="period"]').value = '3';
+periodRow.querySelector('[data-field="period"]').dispatchEvent(new window.Event('input', { bubbles: true }));
+periodRow.querySelector('[data-field="start"]').value = '10:25';
+periodRow.querySelector('[data-field="start"]').dispatchEvent(new window.Event('input', { bubbles: true }));
+periodRow.querySelector('[data-field="end"]').value = '11:15';
+periodRow.querySelector('[data-field="end"]').dispatchEvent(new window.Event('input', { bubbles: true }));
+document.getElementById('day-save').click();
+await new Promise((r) => setTimeout(r, 300));
+assert(errors.length === 0, `no runtime errors saving Tuesday bell schedule (got: ${JSON.stringify(errors)})`);
+assert(document.querySelector('[data-edit-day="2"] .sub').textContent.includes('1 period'), 'Tuesday shows 1 period after save');
+document.getElementById('dayschedule-done').click();
+await new Promise((r) => setTimeout(r, 50));
+
+// ---- Add a class on period 3 ----
 document.getElementById('topbar-add').click();
 await new Promise((r) => setTimeout(r, 50));
 document.getElementById('cls-title').value = 'CS 201';
-document.querySelector('#cls-days button[data-day="1"]').click();
-document.querySelector('#cls-days button[data-day="3"]').click();
+document.getElementById('cls-period').value = '3';
 document.getElementById('cls-save').click();
 await new Promise((r) => setTimeout(r, 300));
 
