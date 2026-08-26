@@ -16,7 +16,7 @@
     {
       "binding": "SCHOOL_KV",
       // Replace with the id printed by: wrangler kv namespace create SCHOOL_KV
-      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+      "id": "18111641c06a4a9188130be3e1c3038e"
     }
   ],
 
