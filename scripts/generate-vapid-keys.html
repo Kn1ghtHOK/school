@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Generate VAPID keys</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 640px;
+    margin: 40px auto;
+    padding: 0 20px 60px;
+    background: #f2f2f7;
+    color: #1c1c1e;
+  }
+  h1 { font-size: 22px; }
+  p.lead { color: #555; line-height: 1.5; }
+  button {
+    background: #000;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 20px;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; }
+  .block {
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin: 18px 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .block h2 { font-size: 15px; margin: 0 0 4px; }
+  .block p.hint { font-size: 13px; color: #666; margin: 0 0 10px; }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12.5px;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    resize: vertical;
+    background: #fafafa;
+  }
+  .copy-btn {
+    background: #e5e5ea;
+    color: #000;
+    font-size: 12.5px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    margin-top: 8px;
+  }
+  .copy-btn.copied { background: #34c759; color: #fff; }
+  #error { color: #ff3b30; font-size: 13.5px; }
+</style>
+</head>
+<body>
+<h1>Generate VAPID keys</h1>
+<p class="lead">
+  This runs entirely in your browser — nothing is sent anywhere. It
+  generates the two keys the school app needs for push notifications.
+  Keep this tab open until you've copied both values into place.
+</p>
+
+<button id="generate">Generate keys</button>
+<p id="error"></p>
+
+<div id="results" style="display:none;">
+  <div class="block">
+    <h2>Public key</h2>
+    <p class="hint">Not secret. Paste this as <code>vars.VAPID_PUBLIC_KEY</code> in <code>wrangler.jsonc</code> (edit the file directly on GitHub, or locally, then commit/push).</p>
+    <textarea id="public-key" rows="2" readonly></textarea>
+    <br /><button class="copy-btn" data-target="public-key">Copy</button>
+  </div>
+
+  <div class="block">
+    <h2>Private key (keep secret)</h2>
+    <p class="hint">Don't commit this anywhere. After your first deploy, go to your Worker in the Cloudflare dashboard → Settings → Variables and Secrets → Add → type <b>Secret</b> → name it <code>VAPID_PRIVATE_JWK</code> → paste this whole line as the value.</p>
+    <textarea id="private-key" rows="4" readonly></textarea>
+    <br /><button class="copy-btn" data-target="private-key">Copy</button>
+  </div>
+</div>
+
+<script>
+function b64urlEncode(buf) {
+  const bytes = new Uint8Array(buf);
+  let str = "";
+  for (const b of bytes) str += String.fromCharCode(b);
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function generateVapidKeys() {
+  const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const privateJwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+  const publicRaw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+  return { privateJwk, publicKeyB64url: b64urlEncode(publicRaw) };
+}
+
+document.getElementById("generate").addEventListener("click", async () => {
+  document.getElementById("error").textContent = "";
+  try {
+    const { privateJwk, publicKeyB64url } = await generateVapidKeys();
+    document.getElementById("public-key").value = publicKeyB64url;
+    document.getElementById("private-key").value = JSON.stringify(privateJwk);
+    document.getElementById("results").style.display = "block";
+  } catch (e) {
+    document.getElementById("error").textContent =
+      "Couldn't generate keys in this browser (" + e.message + "). Try a recent version of Safari, Chrome, or Firefox.";
+  }
+});
+
+document.querySelectorAll(".copy-btn").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const ta = document.getElementById(btn.dataset.target);
+    await navigator.clipboard.writeText(ta.value);
+    btn.textContent = "Copied!";
+    btn.classList.add("copied");
+    setTimeout(() => {
+      btn.textContent = "Copy";
+      btn.classList.remove("copied");
+    }, 1500);
+  });
+});
+</script>
+</body>
+</html>

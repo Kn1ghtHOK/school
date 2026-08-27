@@ -1,0 +1,18 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2C2C2E"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- graduation cap, flat white -->
+  <g fill="#FFFFFF">
+    <polygon points="256,150 396,206 256,262 116,206"/>
+    <path d="M180 232 L180 296 C180 320 220 338 256 338 C292 338 332 320 332 296 L332 232 L256 262 Z" opacity="0.92"/>
+    <rect x="392" y="206" width="8" height="86" rx="4"/>
+    <circle cx="396" cy="300" r="11"/>
+  </g>
+</svg>

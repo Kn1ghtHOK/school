@@ -12,12 +12,13 @@
     "run_worker_first": ["/api/*"]
   },
 
+  // No "id" here on purpose: Cloudflare automatically creates this KV
+  // namespace for you on first deploy (whether via `wrangler deploy` or
+  // the dashboard's GitHub auto-deploy) and binds it under this name.
+  // If you'd rather create it yourself, see README.md for the manual
+  // dashboard steps, which just add an "id" field here.
   "kv_namespaces": [
-    {
-      "binding": "SCHOOL_KV",
-      // Replace with the id printed by: wrangler kv namespace create SCHOOL_KV
-      "id": "18111641c06a4a9188130be3e1c3038e"
-    }
+    { "binding": "SCHOOL_KV" }
   ],
 
   // Checks for due assignments every 15 minutes and sends push reminders.
@@ -27,12 +28,15 @@
 
   "vars": {
     // Public VAPID key — safe to commit, not a secret.
-    // Fill this in after running: node scripts/generate-vapid-keys.mjs
-    "VAPID_PUBLIC_KEY": "",
+    // Generate both keys with scripts/generate-vapid-keys.html (open it
+    // in any browser, no install needed) and paste the public one here.
+    "VAPID_PUBLIC_KEY": "BLzuu1s99LV7RvdedLbOtnxrV95CjnS_7Faf2ZqO5ZIFCsMVuKJQGeTwskbD5Y8PnZWLMZIMI-Zk27Vtj_8TEZs",
     // Shown to push services as the contact for this app; any email works.
     "VAPID_SUBJECT": "mailto:you@example.com"
   }
 
-  // VAPID_PRIVATE_JWK is a secret and does NOT go in this file.
-  // Set it with: wrangler secret put VAPID_PRIVATE_JWK
+  // VAPID_PRIVATE_JWK is a secret and does NOT go in this file — set it
+  // from the Cloudflare dashboard after your first deploy: your Worker ->
+  // Settings -> Variables and Secrets -> Add -> type "Secret". See
+  // README.md for the full walkthrough.
 }

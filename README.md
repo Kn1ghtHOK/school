@@ -39,24 +39,108 @@ no monthly bill.
 
 Cloudflare Workers (API + cron) + Workers KV (storage) + a static
 Workers Assets frontend — plain HTML/CSS/JS, no framework, no build step.
-`wrangler deploy` is the entire build pipeline.
+You can deploy it either from the command line (`wrangler deploy`) or by
+connecting a GitHub repo to Cloudflare's dashboard and letting it
+auto-deploy on every push — no local tooling required for the latter.
 
 ```
 src/            Worker backend (routes, auth, KV storage, Web Push, cron)
 public/         Frontend (HTML/CSS/JS, manifest, service worker, icons)
-scripts/        One-time VAPID key generator + icon source SVGs
+scripts/        VAPID key generator (browser + CLI versions), icon SVGs
 test/           Dev-only tests (not deployed) — see "Testing" below
 ```
 
 ---
 
-## 1. Prerequisites
+# Option A: GitHub + Cloudflare dashboard (no command line)
+
+This is the simplest path if you don't want to touch a terminal at all.
+
+## A1. Get the files into a GitHub repo
+
+1. Unzip the project on your computer (double-click the zip — no
+   terminal needed).
+2. On [github.com](https://github.com), create a new repository (it can
+   be private).
+3. On the new repo's page, select **Add file → Upload files**, then drag
+   the whole unzipped folder's contents into the browser window. Commit
+   the upload.
+
+(If you're comfortable with GitHub Desktop instead, that works too — the
+result just needs to be a repo containing these files.)
+
+## A2. Generate your push notification keys
+
+Open `scripts/generate-vapid-keys.html` by double-clicking it — it opens
+in your default browser and needs no server or install. Select
+**Generate keys**. You'll get two values:
+
+- A **public key** — not secret.
+- A **private key** (JSON) — keep this one private; don't commit it
+  anywhere.
+
+Keep this browser tab open; you'll paste both values in over the next two
+steps.
+
+## A3. Fill in your public settings
+
+Back on GitHub, open `wrangler.jsonc` in your repo and select the pencil
+(edit) icon. Paste your public key into `vars.VAPID_PUBLIC_KEY`, and
+change `vars.VAPID_SUBJECT` to `mailto:` your own email. Commit the
+change directly to the main branch.
+
+## A4. Connect the repo to Cloudflare
+
+1. In the [Cloudflare dashboard](https://dash.cloudflare.com), go to
+   **Workers & Pages → Create application → Import a repository**.
+2. Connect your GitHub account if you haven't already, and select the
+   repo you just created.
+3. Leave the build settings as detected (this project needs no build
+   command) and select **Save and Deploy**.
+
+Cloudflare will read `wrangler.jsonc`, automatically create the KV
+namespace this app needs (no manual setup — it's provisioned for you on
+first deploy), set up the 15-minute reminder check, and deploy. You'll
+get a live URL like `https://school-app.<your-subdomain>.workers.dev`.
+
+*If a deploy ever fails complaining about the KV binding*, automatic
+provisioning didn't kick in — fall back to creating it yourself: **Workers
+& Pages → KV → Create a namespace**, then edit `wrangler.jsonc` on GitHub
+to add `"id": "the-id-you-were-given"` next to the `SCHOOL_KV` binding.
+
+## A5. Add your private key as a secret
+
+Once the first deploy succeeds:
+
+1. Go to your Worker in the dashboard (**Workers & Pages → your Worker**).
+2. **Settings → Variables and Secrets → Add**.
+3. Type: **Secret**. Name: `VAPID_PRIVATE_JWK`. Value: paste the private
+   key JSON from step A2.
+4. Select **Deploy** to apply it.
+
+This only needs to be done once — secrets you set here aren't stored in
+your repo, so they survive every future automatic deploy triggered by a
+git push.
+
+## A6. First run
+
+Open your live URL. You'll be asked to set a passcode (4+ characters) —
+that's the only "login" the app has. From now on, any change you commit
+on GitHub (even editing a file right in the browser) automatically
+redeploys.
+
+---
+
+# Option B: Command line (wrangler)
+
+If you'd rather use a terminal, this is faster for iterating on changes.
+
+## B1. Prerequisites
 
 - A free [Cloudflare account](https://dash.cloudflare.com/sign-up).
 - [Node.js](https://nodejs.org) 18+ installed locally.
-- That's it — no credit card required for what this app uses.
 
-## 2. Install dependencies
+## B2. Install dependencies
 
 ```bash
 cd school-app
@@ -66,26 +150,13 @@ npx wrangler login
 
 `wrangler login` opens a browser tab to connect your Cloudflare account.
 
-## 3. Create the KV namespace
-
-```bash
-npx wrangler kv namespace create SCHOOL_KV
-```
-
-This prints an `id`. Open `wrangler.jsonc` and paste it in:
-
-```jsonc
-"kv_namespaces": [
-  { "binding": "SCHOOL_KV", "id": "PASTE_YOUR_ID_HERE" }
-]
-```
-
-## 4. Set up push notifications (VAPID keys)
+## B3. Set up push notifications (VAPID keys)
 
 ```bash
 npm run generate-vapid-keys
 ```
 
+(Or use `scripts/generate-vapid-keys.html` in a browser — same result.)
 This prints two things:
 
 1. A **public key** — paste it into `wrangler.jsonc` as
@@ -99,22 +170,20 @@ This prints two things:
    and paste the JSON when prompted.
 
 Also update `vars.VAPID_SUBJECT` in `wrangler.jsonc` to `mailto:` your own
-email (this is only shown to push services if they ever need to contact
-you about your traffic — it's standard practice, not visible to you day to
-day).
+email.
 
-## 5. Deploy
+## B4. Deploy
 
 ```bash
 npx wrangler deploy
 ```
 
+The KV namespace this app needs is created automatically on this first
+deploy (no separate `wrangler kv namespace create` step required).
 Wrangler prints your live URL, something like
-`https://school-app.<your-subdomain>.workers.dev`. You can also attach a
-custom domain later from the Cloudflare dashboard if you want one — the
-app works fine on the free `workers.dev` URL too.
+`https://school-app.<your-subdomain>.workers.dev`.
 
-## 6. First run
+## B5. First run
 
 Open the URL. You'll be asked to set a passcode (4+ characters) — this is
 the only "login" the app has. Use the same passcode on every device you
