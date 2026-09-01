@@ -1,5 +1,11 @@
 const TOKEN_KEY = "schoolapp_token";
 
+// Only idempotent methods are safe to auto-retry on a network blip — a
+// dropped response after a POST that actually succeeded server-side
+// would otherwise create a duplicate (e.g. two copies of an assignment).
+const RETRYABLE_METHODS = new Set(["GET", "PUT", "DELETE"]);
+const RETRY_DELAYS_MS = [500, 1500];
+
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -10,22 +16,48 @@ export function setToken(token) {
 }
 
 class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, { offline = false } = {}) {
     super(message);
     this.status = status;
+    this.offline = offline;
   }
 }
 
-async function request(method, path, body) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isOffline() {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+function notifyAuthExpired() {
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new CustomEvent("schoolapp:auth-expired"));
+  }
+}
+
+async function attemptOnce(method, path, body) {
   const headers = { "Content-Type": "application/json" };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(path, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // fetch() itself throws for network-level failures: offline, DNS
+    // failure, connection reset, etc. — there's no HTTP response at all.
+    throw new ApiError(
+      isOffline() ? "You're offline — reconnect and try again." : "Couldn't reach the server. Check your connection and try again.",
+      0,
+      { offline: true }
+    );
+  }
 
   let data = null;
   try {
@@ -35,10 +67,34 @@ async function request(method, path, body) {
   }
 
   if (!res.ok) {
-    if (res.status === 401) setToken(null);
-    throw new ApiError(data?.error || `Request failed (${res.status})`, res.status);
+    if (res.status === 401) {
+      setToken(null);
+      notifyAuthExpired();
+    }
+    throw new ApiError(data?.error || `Something went wrong (${res.status}). Please try again.`, res.status);
   }
   return data;
+}
+
+async function request(method, path, body) {
+  const canRetry = RETRYABLE_METHODS.has(method);
+  const attempts = canRetry ? RETRY_DELAYS_MS.length + 1 : 1;
+  let lastError;
+
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await attemptOnce(method, path, body);
+    } catch (e) {
+      lastError = e;
+      // Retry only on a network-level failure or a 5xx server error — never
+      // on a 4xx (retrying won't fix bad input) or a 401 (needs a fresh login).
+      const serverError = typeof e.status === "number" && e.status >= 500;
+      const shouldRetry = canRetry && i < attempts - 1 && (e.offline || serverError);
+      if (!shouldRetry) throw e;
+      await sleep(RETRY_DELAYS_MS[i]);
+    }
+  }
+  throw lastError;
 }
 
 export const api = {
@@ -72,6 +128,16 @@ export const api = {
   deleteAssignment: (termId, id) => request("DELETE", `/api/terms/${termId}/assignments/${id}`),
   completeAssignment: (termId, id) => request("POST", `/api/terms/${termId}/assignments/${id}/complete`),
   uncompleteAssignment: (termId, id) => request("POST", `/api/terms/${termId}/assignments/${id}/uncomplete`),
+  snoozeAssignment: (termId, id, until) => request("POST", `/api/terms/${termId}/assignments/${id}/snooze`, { until }),
+
+  // search
+  search: (termId, q) => request("GET", `/api/terms/${termId}/search?q=${encodeURIComponent(q)}`),
+
+  // todos (global, not term-scoped)
+  listTodos: () => request("GET", "/api/todos"),
+  createTodo: (title) => request("POST", "/api/todos", { title }),
+  updateTodo: (id, data) => request("PUT", `/api/todos/${id}`, data),
+  deleteTodo: (id) => request("DELETE", `/api/todos/${id}`),
 
   // notes
   getNotes: (classId) => request("GET", `/api/classes/${classId}/notes`),

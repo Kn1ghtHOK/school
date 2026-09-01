@@ -32,6 +32,7 @@ export const keys = {
   focus: () => "focus",
   points: () => "points",
   settings: () => "settings",
+  todos: () => "todos",
 };
 
 export const DEFAULT_SETTINGS = {

@@ -30,7 +30,7 @@
     // Public VAPID key — safe to commit, not a secret.
     // Generate both keys with scripts/generate-vapid-keys.html (open it
     // in any browser, no install needed) and paste the public one here.
-    "VAPID_PUBLIC_KEY": "BLzuu1s99LV7RvdedLbOtnxrV95CjnS_7Faf2ZqO5ZIFCsMVuKJQGeTwskbD5Y8PnZWLMZIMI-Zk27Vtj_8TEZs",
+    "VAPID_PUBLIC_KEY": "",
     // Shown to push services as the contact for this app; any email works.
     "VAPID_SUBJECT": "mailto:you@example.com"
   }

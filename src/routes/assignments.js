@@ -1,6 +1,14 @@
 import { json, err, readJSON } from "../lib/http.js";
 import { getJSON, putJSON, newId, keys } from "../lib/store.js";
 import { scoreCompletion, summarizeHistory } from "../lib/points.js";
+import {
+  isValidDate,
+  normalizePriority,
+  normalizeEstimateMinutes,
+  normalizeUrl,
+  clampText,
+  MAX_TITLE_LEN,
+} from "../lib/validate.js";
 
 export async function list(request, env, termId) {
   const assignments = await getJSON(env.SCHOOL_KV, keys.assignments(termId), []);
@@ -9,20 +17,34 @@ export async function list(request, env, termId) {
 
 export async function create(request, env, termId) {
   const body = await readJSON(request);
-  if (!body.title || !body.dueDate) return err("title and dueDate are required.", 400);
+  const title = clampText(body.title, MAX_TITLE_LEN).trim();
+  if (!title) return err("title is required.", 400);
+  if (!isValidDate(body.dueDate)) return err("dueDate is required and must be a valid date.", 400);
+
+  const priority = normalizePriority(body.priority);
+  if (priority === null) return err(`priority must be one of: low, medium, high.`, 400);
+
+  const estimatedMinutes = normalizeEstimateMinutes(body.estimatedMinutes);
+  if (estimatedMinutes === false) return err("estimatedMinutes must be a positive number (minutes).", 400);
+
+  const link = normalizeUrl(body.link);
+  if (link === false) return err("link must be a valid http(s) URL.", 400);
 
   const assignments = await getJSON(env.SCHOOL_KV, keys.assignments(termId), []);
   const assignment = {
     id: newId(),
-    title: String(body.title),
+    title,
     classId: body.classId || null,
-    dueDate: body.dueDate,
-    notes: body.notes || "",
-    priority: body.priority || "medium",
+    dueDate: new Date(body.dueDate).toISOString(),
+    notes: clampText(body.notes),
+    priority,
+    estimatedMinutes: estimatedMinutes || null,
+    link: link || null,
     status: "pending",
     completedAt: null,
     pointsAwarded: null,
     remindersSent: [],
+    snoozedUntil: null,
     createdAt: Date.now(),
   };
   assignments.push(assignment);
@@ -37,9 +59,40 @@ export async function update(request, env, termId, id) {
   if (idx === -1) return err("Assignment not found.", 404);
 
   // Editing the due date invalidates any reminders already sent for old offsets.
-  const { status, completedAt, pointsAwarded, remindersSent, ...editable } = body;
+  // status/completedAt/pointsAwarded/remindersSent/snoozedUntil are only ever
+  // changed by their dedicated endpoints, never by a plain field edit.
+  const { status, completedAt, pointsAwarded, remindersSent, snoozedUntil, ...editable } = body;
+
+  if (editable.title !== undefined) {
+    editable.title = clampText(editable.title, MAX_TITLE_LEN).trim();
+    if (!editable.title) return err("title cannot be empty.", 400);
+  }
+  if (editable.dueDate !== undefined) {
+    if (!isValidDate(editable.dueDate)) return err("dueDate must be a valid date.", 400);
+    editable.dueDate = new Date(editable.dueDate).toISOString();
+  }
+  if (editable.priority !== undefined) {
+    const priority = normalizePriority(editable.priority);
+    if (priority === null) return err(`priority must be one of: low, medium, high.`, 400);
+    editable.priority = priority;
+  }
+  if (editable.notes !== undefined) editable.notes = clampText(editable.notes);
+  if (editable.estimatedMinutes !== undefined) {
+    const estimatedMinutes = normalizeEstimateMinutes(editable.estimatedMinutes);
+    if (estimatedMinutes === false) return err("estimatedMinutes must be a positive number (minutes).", 400);
+    editable.estimatedMinutes = estimatedMinutes;
+  }
+  if (editable.link !== undefined) {
+    const link = normalizeUrl(editable.link);
+    if (link === false) return err("link must be a valid http(s) URL.", 400);
+    editable.link = link;
+  }
+
   assignments[idx] = { ...assignments[idx], ...editable, id };
-  if (body.dueDate) assignments[idx].remindersSent = [];
+  if (body.dueDate) {
+    assignments[idx].remindersSent = [];
+    assignments[idx].snoozedUntil = null; // a new due date supersedes any prior snooze
+  }
   await putJSON(env.SCHOOL_KV, keys.assignments(termId), assignments);
   return json({ assignment: assignments[idx] });
 }
@@ -100,6 +153,22 @@ export async function uncomplete(request, env, termId, id) {
 
   const summary = await removeFromHistory(env, id);
   return json({ assignment: assignments[idx], ...summary });
+}
+
+/** Suppresses reminders for this assignment until a given time, then sends one fresh nudge when it elapses. */
+export async function snooze(request, env, termId, id) {
+  const body = await readJSON(request);
+  if (!isValidDate(body.until)) return err("until is required and must be a valid date.", 400);
+  const until = new Date(body.until).getTime();
+  if (until <= Date.now()) return err("until must be in the future.", 400);
+
+  const assignments = await getJSON(env.SCHOOL_KV, keys.assignments(termId), []);
+  const idx = assignments.findIndex((a) => a.id === id);
+  if (idx === -1) return err("Assignment not found.", 404);
+
+  assignments[idx].snoozedUntil = new Date(until).toISOString();
+  await putJSON(env.SCHOOL_KV, keys.assignments(termId), assignments);
+  return json({ assignment: assignments[idx] });
 }
 
 async function removeFromHistory(env, assignmentId) {

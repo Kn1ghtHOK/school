@@ -29,11 +29,21 @@ export async function setDay(request, env, termId, weekday) {
   if (!Array.isArray(body.periods) || body.periods.length === 0) {
     return err("periods must be a non-empty array, or null for no school.", 400);
   }
+  const seenLabels = new Set();
   for (const p of body.periods) {
-    if (!p.period || !String(p.period).trim()) return err("Each period needs a label.", 400);
+    const label = String(p.period ?? "").trim();
+    if (!label) return err("Each period needs a label.", 400);
+    if (label.length > 20) return err("Period labels should be short (20 characters or fewer).", 400);
     if (!TIME_RE.test(p.start) || !TIME_RE.test(p.end)) {
       return err(`Each period needs valid start/end times (got "${p.start}"–"${p.end}").`, 400);
     }
+    if (p.start >= p.end) {
+      return err(`Period "${label}" must end after it starts.`, 400);
+    }
+    if (seenLabels.has(label)) {
+      return err(`Period "${label}" is listed more than once for this day.`, 400);
+    }
+    seenLabels.add(label);
   }
 
   const cleaned = body.periods.map((p) => ({ period: String(p.period).trim(), start: p.start, end: p.end }));

@@ -1,10 +1,13 @@
 import { json, err, readJSON } from "../lib/http.js";
 import { getJSON, putJSON, newId, keys } from "../lib/store.js";
+import { clampText, MAX_TITLE_LEN } from "../lib/validate.js";
 
 // A "class" is tied to a period label (e.g. "3", "WIN") rather than to
 // specific weekdays/times directly. Which days it actually meets, and at
 // what time, is derived from the term's day schedule (see dayschedule.js)
 // — whichever weekdays include that period.
+
+const MAX_PERIOD_LEN = 20;
 
 export async function list(request, env, termId) {
   const classes = await getJSON(env.SCHOOL_KV, keys.schedule(termId), []);
@@ -13,17 +16,18 @@ export async function list(request, env, termId) {
 
 export async function create(request, env, termId) {
   const body = await readJSON(request);
-  if (!body.title || !String(body.period || "").trim()) {
-    return err("title and period are required.", 400);
-  }
+  const title = clampText(body.title, MAX_TITLE_LEN).trim();
+  const period = clampText(body.period, MAX_PERIOD_LEN).trim();
+  if (!title) return err("title is required.", 400);
+  if (!period) return err("period is required.", 400);
 
   const classes = await getJSON(env.SCHOOL_KV, keys.schedule(termId), []);
   const cls = {
     id: newId(),
-    title: String(body.title),
-    period: String(body.period).trim(),
-    instructor: body.instructor || "",
-    location: body.location || "",
+    title,
+    period,
+    instructor: clampText(body.instructor, MAX_TITLE_LEN),
+    location: clampText(body.location, MAX_TITLE_LEN),
     createdAt: Date.now(),
   };
   classes.push(cls);
@@ -37,7 +41,19 @@ export async function update(request, env, termId, classId) {
   const idx = classes.findIndex((c) => c.id === classId);
   if (idx === -1) return err("Class not found.", 404);
 
-  classes[idx] = { ...classes[idx], ...body, id: classId };
+  const editable = { ...body };
+  if (editable.title !== undefined) {
+    editable.title = clampText(editable.title, MAX_TITLE_LEN).trim();
+    if (!editable.title) return err("title cannot be empty.", 400);
+  }
+  if (editable.period !== undefined) {
+    editable.period = clampText(editable.period, MAX_PERIOD_LEN).trim();
+    if (!editable.period) return err("period cannot be empty.", 400);
+  }
+  if (editable.instructor !== undefined) editable.instructor = clampText(editable.instructor, MAX_TITLE_LEN);
+  if (editable.location !== undefined) editable.location = clampText(editable.location, MAX_TITLE_LEN);
+
+  classes[idx] = { ...classes[idx], ...editable, id: classId };
   await putJSON(env.SCHOOL_KV, keys.schedule(termId), classes);
   return json({ class: classes[idx] });
 }

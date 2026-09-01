@@ -67,6 +67,9 @@
       </button>
     </div>
     <div style="display:flex; align-items:center; gap:8px;">
+      <button class="topbar-add" id="topbar-search" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+      </button>
       <button class="topbar-add hidden" id="topbar-add" aria-label="Add">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
@@ -93,6 +96,11 @@
         <div class="stat-chip"><div class="n rounded" id="stat-overdue">0</div><div class="l">Overdue</div></div>
       </div>
 
+      <div id="do-next-wrap" class="hidden">
+        <div class="section-title">Do this next</div>
+        <div class="list-card" id="do-next-card"></div>
+      </div>
+
       <div class="section-title">Today's classes</div>
       <div class="list-card" id="today-classes"></div>
 
@@ -116,11 +124,26 @@
 
     <!-- ---------- ASSIGNMENTS ---------- -->
     <section class="view" id="view-assignments">
+      <div class="quick-add-row">
+        <input type="text" id="quick-add-input" placeholder="Quick add — e.g. &quot;Essay due Friday 5pm&quot;" />
+        <button class="btn primary" id="quick-add-submit">Add</button>
+      </div>
+
       <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
         <span>Pending</span>
         <button class="btn ghost" id="btn-syllabus-import" style="padding:6px 10px; font-size:12.5px;">Paste syllabus</button>
       </div>
       <div class="list-card" id="assignments-pending"></div>
+
+      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>To-dos</span>
+      </div>
+      <div class="quick-add-row">
+        <input type="text" id="todo-add-input" placeholder="e.g. &quot;Add a new pen to my bag&quot;" />
+        <button class="btn ghost" id="todo-add-submit">Add</button>
+      </div>
+      <div class="list-card" id="todos-list"></div>
+
       <div class="section-title">Completed</div>
       <div class="list-card" id="assignments-done"></div>
     </section>
@@ -160,6 +183,11 @@
       <div class="section-title">Terms</div>
       <div class="settings-list" id="settings-terms"></div>
       <button class="btn ghost block mt-8" id="btn-add-term">Add a term</button>
+
+      <div id="archived-terms-wrap" class="hidden">
+        <div class="section-title">Archived</div>
+        <div class="settings-list" id="settings-archived-terms"></div>
+      </div>
 
       <div class="section-title">Notifications</div>
       <div class="settings-list">

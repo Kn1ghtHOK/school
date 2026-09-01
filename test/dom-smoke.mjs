@@ -127,6 +127,52 @@ await new Promise((r) => setTimeout(r, 300));
 assert(errors.length === 0, `no runtime errors after adding assignment (got: ${JSON.stringify(errors)})`);
 assert(document.getElementById('assignments-pending').textContent.includes('Essay 1'), 'assignment appears in list');
 
+// ---- Quick add (natural-language) ----
+document.getElementById('quick-add-input').value = 'Lab report due tomorrow at 5pm';
+document.getElementById('quick-add-submit').click();
+await new Promise((r) => setTimeout(r, 300));
+assert(errors.length === 0, `no runtime errors after quick-add (got: ${JSON.stringify(errors)})`);
+assert(document.getElementById('assignments-pending').textContent.includes('Lab report'), 'quick-added assignment appears in list');
+assert(document.getElementById('quick-add-input').value === '', 'quick-add input clears after a successful add');
+
+// ---- Snooze from the assignment sheet ----
+const labReportRow = [...document.querySelectorAll('[data-assignment-id]')].find((r) => r.textContent.includes('Lab report'));
+labReportRow.click();
+await new Promise((r) => setTimeout(r, 100));
+assert(!!document.getElementById('asg-snooze-1h'), 'snooze buttons appear on a pending assignment');
+document.getElementById('asg-snooze-1h').click();
+await new Promise((r) => setTimeout(r, 200));
+assert(errors.length === 0, `no runtime errors snoozing an assignment (got: ${JSON.stringify(errors)})`);
+assert(document.getElementById('sheet-root').innerHTML === '', 'sheet closes after snoozing');
+
+// Quick add with no parseable date should open the full sheet instead of failing silently.
+document.getElementById('quick-add-input').value = 'Bring calculator to class';
+document.getElementById('quick-add-submit').click();
+await new Promise((r) => setTimeout(r, 100));
+assert(errors.length === 0, `no runtime errors when quick-add has no date (got: ${JSON.stringify(errors)})`);
+assert(document.getElementById('asg-title')?.value === 'Bring calculator to class', 'quick-add falls back to the full sheet with the title prefilled');
+document.getElementById('asg-cancel').click();
+
+// ---- To-dos ----
+document.getElementById('todo-add-input').value = 'Add a new pen to my bag';
+document.getElementById('todo-add-submit').click();
+await new Promise((r) => setTimeout(r, 200));
+assert(errors.length === 0, `no runtime errors after adding a todo (got: ${JSON.stringify(errors)})`);
+assert(document.querySelector('[data-todo-title]')?.value === 'Add a new pen to my bag', 'todo appears in list');
+
+const todoCheck = document.querySelector('[data-toggle-todo]');
+assert(!!todoCheck, 'todo checkbox exists');
+todoCheck.click();
+await new Promise((r) => setTimeout(r, 200));
+assert(errors.length === 0, `no runtime errors toggling a todo (got: ${JSON.stringify(errors)})`);
+assert(document.querySelector('.todo-row.done'), 'todo shows as done after toggling');
+
+const todoRemoveBtn = document.querySelector('[data-remove-todo]');
+todoRemoveBtn.click();
+await new Promise((r) => setTimeout(r, 100));
+assert(errors.length === 0, `no runtime errors deleting a todo (got: ${JSON.stringify(errors)})`);
+assert(!document.getElementById('todos-list').querySelector('[data-todo-title]'), 'todo removed from list immediately after delete');
+
 // ---- Complete it via checkbox ----
 const checkBtn = document.querySelector('[data-toggle-complete]');
 assert(!!checkBtn, 'complete checkbox exists');
@@ -141,6 +187,44 @@ for (const view of ['today', 'calendar', 'focus', 'settings']) {
   await new Promise((r) => setTimeout(r, 100));
   assert(errors.length === 0, `no runtime errors rendering ${view} view (got: ${JSON.stringify(errors)})`);
 }
+
+location.hash = 'today';
+await new Promise((r) => setTimeout(r, 100));
+assert(!document.getElementById('do-next-wrap').classList.contains('hidden'), '"Do this next" card shows when pending assignments exist');
+assert(document.getElementById('do-next-card').querySelector('[data-assignment-id]'), '"Do this next" card contains an assignment row');
+
+// ---- Search ----
+document.getElementById('topbar-search').click();
+await new Promise((r) => setTimeout(r, 50));
+document.getElementById('search-input').value = 'CS 201';
+document.getElementById('search-input').dispatchEvent(new window.Event('input', { bubbles: true }));
+await new Promise((r) => setTimeout(r, 400)); // debounce + fetch
+assert(errors.length === 0, `no runtime errors searching (got: ${JSON.stringify(errors)})`);
+assert(document.getElementById('search-results').textContent.includes('CS 201'), 'search finds the class by name');
+document.querySelector('#search-results [data-class-id]').click();
+await new Promise((r) => setTimeout(r, 100));
+assert(document.getElementById('cls-title')?.value === 'CS 201', 'clicking a search result opens its edit sheet');
+document.getElementById('cls-cancel').click();
+
+// ---- Archive / unarchive a term ----
+location.hash = 'settings';
+await new Promise((r) => setTimeout(r, 100));
+document.querySelector('#settings-terms [data-edit-term]').click();
+await new Promise((r) => setTimeout(r, 100));
+document.getElementById('term-archive').click();
+await new Promise((r) => setTimeout(r, 300));
+assert(errors.length === 0, `no runtime errors archiving a term (got: ${JSON.stringify(errors)})`);
+assert(!document.getElementById('archived-terms-wrap').classList.contains('hidden'), 'archived section becomes visible after archiving the only term');
+assert(document.getElementById('term-switch-label').textContent === 'Add a term', 'topbar shows no active term after archiving it');
+
+document.querySelector('#settings-archived-terms [data-edit-term]').click();
+await new Promise((r) => setTimeout(r, 100));
+assert(document.getElementById('term-archive').textContent.includes('Unarchive'), 'archived term sheet offers Unarchive');
+document.getElementById('term-archive').click();
+await new Promise((r) => setTimeout(r, 300));
+assert(errors.length === 0, `no runtime errors unarchiving a term (got: ${JSON.stringify(errors)})`);
+assert(document.getElementById('archived-terms-wrap').classList.contains('hidden'), 'archived section hides once nothing is archived');
+assert(document.getElementById('term-switch-label').textContent === 'Fall 2026', 'unarchiving reactivates the term');
 
 // ---- Syllabus paste-in import ----
 document.getElementById('btn-syllabus-import').click();
@@ -186,6 +270,23 @@ document.querySelector('[data-class-id]').click();
 await new Promise((r) => setTimeout(r, 150));
 assert(document.getElementById('cls-notes').value === 'Bring calculator', 'class notes persisted across edits');
 document.getElementById('cls-cancel').click();
+
+// ---- Delete-with-undo: class disappears immediately, Undo brings it back ----
+document.querySelector('[data-class-id]').click();
+await new Promise((r) => setTimeout(r, 100));
+document.getElementById('cls-delete').click();
+await new Promise((r) => setTimeout(r, 100));
+assert(errors.length === 0, `no runtime errors after optimistic class delete (got: ${JSON.stringify(errors)})`);
+assert(!document.getElementById('schedule-week').textContent.includes('CS 201'), 'class removed from schedule immediately after delete');
+// Pick the toast that actually belongs to this delete — other undo toasts
+// (e.g. from the earlier todo deletion) may still be on screen too.
+const classToast = [...document.querySelectorAll('.toast')].find((t) => t.textContent.includes('CS 201'));
+const undoBtn = classToast?.querySelector('.toast-action');
+assert(!!undoBtn && undoBtn.textContent === 'Undo', 'undo toast action is shown after delete');
+undoBtn.click();
+await new Promise((r) => setTimeout(r, 100));
+assert(errors.length === 0, `no runtime errors after clicking Undo (got: ${JSON.stringify(errors)})`);
+assert(document.getElementById('schedule-week').textContent.includes('CS 201'), 'class restored after Undo');
 
 // ---- Focus timer start/stop ----
 location.hash = 'focus';

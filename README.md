@@ -15,17 +15,40 @@ no monthly bill.
   on the days its period is actually scheduled — so a Wednesday with a
   shorter, later-starting day naturally shows fewer classes than a full
   Tuesday, with no per-day duplicate data entry.
-- **Assignment tracking** — due dates, priority, notes, one-tap complete.
+- **Assignment tracking** — due dates, priority, effort estimate, an
+  optional link (Canvas, a doc, etc.), notes, one-tap complete.
 - **Real push notifications** — configurable reminders (default: 1 day and
   1 hour before due) delivered via the standard Web Push protocol, plus a
   one-time "overdue" nudge.
+- **Quick add** — type "Essay due Friday 5pm" and it's parsed and created
+  immediately; falls back to the full form with the title prefilled if it
+  can't find a date in what you typed, so nothing gets lost.
+- **Repeating assignments** — a "Repeat weekly" option creates one
+  assignment per week through a chosen end date, for things like weekly
+  reading.
+- **Snooze** — push a reminder an hour or a day out from the assignment
+  itself. (Notification action buttons are a bonus where the browser
+  supports them, but the reliable path — especially on Safari — is the
+  Snooze buttons inside the assignment sheet.)
+- **To-dos** — a separate, simple checklist for things that aren't tied to
+  a class — a form to return, something to pack — right alongside your
+  assignments.
+- **"Do this next"** — one highlighted suggestion on Today, weighing both
+  urgency and priority rather than just the soonest due date.
+- **Free-period finder** — gaps of 20+ minutes between today's classes are
+  called out on Today, tap one to size the focus timer to it.
+- **Search** — across class names, instructors, rooms, assignment titles
+  and notes, and class notes content.
+- **"While you were away"** — a one-time nudge on open summarizing what
+  became due or overdue while the app was closed.
 - **Points & streaks** — completing something early earns more points than
   completing it late; a running streak resets on a late completion.
 - **Focus timer (Pomodoro)** — also pauses push reminders while it runs, and
   tries to keep the screen awake on supported browsers.
 - **Month calendar** — assignment due dates plotted against your recurring
   schedule.
-- **Multiple terms** — keep Fall/Spring semesters separate, switch anytime.
+- **Multiple terms, with archiving** — keep semesters separate, switch
+  anytime, and archive old ones out of the switcher without deleting them.
 - **Syllabus paste-in** — paste a schedule block from a syllabus and it
   pulls out dated items (exams, quizzes, readings, due dates) for you to
   review and import — nothing is added without your OK.
@@ -265,9 +288,12 @@ them):
 
 ```bash
 cd test
-npm install        # installs jsdom, dev-only
-node e2e-test.mjs   # backend API tests against an in-memory KV mock
-node dom-smoke.mjs  # full frontend flow against the real backend logic
+npm install              # installs jsdom, dev-only
+npm test                 # runs everything below in sequence
+node e2e-test.mjs         # backend API tests against an in-memory KV mock
+node cron-test.mjs        # reminder-sweep failure isolation (bad data, bad subscriptions)
+node date-parse-test.mjs  # natural-language date parsing ("Friday", "in 3 days", etc.)
+node dom-smoke.mjs        # full frontend flow against the real backend logic
 ```
 
 Worth re-running these after making changes, especially to `src/` or
@@ -275,7 +301,7 @@ Worth re-running these after making changes, especially to `src/` or
 
 ## Extending it
 
-A few things that were left out on purpose to keep v1 focused, in case
+A few things that were left out on purpose to keep scope focused, in case
 future-you wants them:
 
 - **Grades/GPA** — the data model doesn't have grade weights yet; would
@@ -283,8 +309,13 @@ future-you wants them:
 - **.ics export** — schedule/assignments are plain JS objects, so writing
   an `.ics` string from them is a self-contained addition.
 - **Smarter syllabus parsing** — swapping the regex parser for a call to
-  an LLM API would need you to bring your own API key (kept out of v1 so
-  the app has no required paid dependency).
+  an LLM API would need you to bring your own API key (kept out on
+  purpose so the app has no required paid dependency).
 - **Per-assignment reminder overrides** — reminders currently use one
   global offset list; `assignment.remindersSent` already exists per item,
   so overrides would mainly be a UI + one field addition.
+- **Notification action buttons for snoozing** — wired up in `sw.js` as a
+  progressive enhancement, but as of this writing notification `actions`
+  aren't reliably supported across browsers (notably not on Safari) — the
+  primary, always-available way to snooze is the buttons inside the
+  assignment sheet itself.

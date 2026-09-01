@@ -306,6 +306,8 @@ main { padding: 4px 16px 24px; }
   cursor: pointer;
 }
 .list-row:last-child { border-bottom: none; }
+.free-period-row { cursor: pointer; }
+.free-period-row .row-time { color: var(--text-tertiary); }
 
 .row-time {
   font-family: var(--font-rounded);
@@ -387,6 +389,41 @@ main { padding: 4px 16px 24px; }
 .field textarea { resize: vertical; min-height: 70px; font-family: var(--font-body); }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
+
+.quick-add-row { display: flex; gap: 8px; margin: 0 0 16px; }
+.quick-add-row input[type="text"] {
+  flex: 1;
+  background: var(--surface-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  font-size: 14.5px;
+  color: var(--text);
+}
+.quick-add-row .btn { flex-shrink: 0; padding: 10px 16px; }
+
+.todo-row { cursor: default; }
+.todo-row .check { flex-shrink: 0; }
+.todo-title {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 14.5px;
+  padding: 2px 0;
+}
+.todo-row.done .todo-title { color: var(--text-tertiary); text-decoration: line-through; }
+.todo-remove {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.todo-remove svg { width: 10px; height: 10px; }
 
 .day-picker { display: flex; gap: 6px; }
 .day-picker button {
@@ -537,6 +574,8 @@ main { padding: 4px 16px 24px; }
 .check svg { width: 13px; height: 13px; }
 .list-row.done .check { background: var(--success); border-color: var(--success); color: #fff; }
 .priority-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.row-link-icon { display: inline-flex; vertical-align: -2px; color: var(--text-tertiary); margin-left: 4px; }
+.row-link-icon svg { width: 12px; height: 12px; }
 .priority-high { background: var(--danger); }
 .priority-medium { background: var(--text-secondary); }
 .priority-low { background: var(--text-tertiary); }
@@ -571,6 +610,18 @@ main { padding: 4px 16px 24px; }
   animation: toastIn 0.25s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 .toast.celebrate { background: var(--success); color: #04270f; }
+.toast-action {
+  background: none;
+  border: none;
+  color: inherit;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+  flex-shrink: 0;
+}
 @keyframes toastIn { from { transform: translateY(-12px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 /* ===========================================================

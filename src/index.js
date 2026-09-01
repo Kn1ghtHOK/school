@@ -9,6 +9,8 @@ import * as notes from "./routes/notes.js";
 import * as push from "./routes/push.js";
 import * as focus from "./routes/focus.js";
 import * as misc from "./routes/misc.js";
+import * as todos from "./routes/todos.js";
+import { search } from "./routes/search.js";
 import { runReminderSweep } from "./cron.js";
 
 // Each route: [method, pattern, handler, { public: true } for no-auth routes]
@@ -39,6 +41,14 @@ const ROUTES = [
   ["DELETE", "/api/terms/:termId/assignments/:id", assignments.remove],
   ["POST", "/api/terms/:termId/assignments/:id/complete", assignments.complete],
   ["POST", "/api/terms/:termId/assignments/:id/uncomplete", assignments.uncomplete],
+  ["POST", "/api/terms/:termId/assignments/:id/snooze", assignments.snooze],
+
+  ["GET", "/api/terms/:termId/search", search],
+
+  ["GET", "/api/todos", todos.list],
+  ["POST", "/api/todos", todos.create],
+  ["PUT", "/api/todos/:id", todos.update],
+  ["DELETE", "/api/todos/:id", todos.remove],
 
   ["GET", "/api/classes/:classId/notes", notes.get],
   ["PUT", "/api/classes/:classId/notes", notes.put],

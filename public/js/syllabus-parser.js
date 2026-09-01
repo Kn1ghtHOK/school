@@ -3,22 +3,7 @@
 // Never auto-imports — the caller always shows these for the user to confirm/edit.
 // This is intentionally simple regex/keyword matching, not NLP: it will miss
 // unusual formats, and that's fine because everything is reviewed before saving.
-
-const MONTHS = {
-  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
-  may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8,
-  september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
-};
-
-// "Jan 15", "January 15th", "Jan. 15, 2026"
-const MONTH_DAY_RE =
-  /\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?/i;
-
-// "1/15", "1/15/26", "01/15/2026"
-const SLASH_DATE_RE = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/;
-
-// "3:00 pm", "15:00", "11:59pm"
-const TIME_RE = /\b(\d{1,2}):(\d{2})\s*(am|pm)?\b/i;
+import { MONTHS, MONTH_DAY_RE, SLASH_DATE_RE, TIME_RE, parseTimeMatch, resolveYear } from "./date-parse.js";
 
 const TYPE_KEYWORDS = [
   { re: /\b(final exam|final)\b/i, type: "exam" },
@@ -46,23 +31,6 @@ function cleanTitle(line, dateMatchText, timeMatchText) {
   t = t.replace(/^[\s\-–—:.,]+|[\s\-–—:.,]+$/g, "");
   t = t.replace(/\s{2,}/g, " ").trim();
   return t || "(untitled)";
-}
-
-/**
- * Pick a year for a month/day pair given a term's date range, so
- * "Sep 3" resolves correctly for a term that spans e.g. Aug 2026–May 2027.
- */
-function resolveYear(month, day, termStart, termEnd) {
-  if (!termStart || !termEnd) return new Date().getFullYear();
-  const start = new Date(termStart);
-  const end = new Date(termEnd);
-  for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
-    const candidate = new Date(y, month, day);
-    if (candidate >= start && candidate <= new Date(end.getTime() + 24 * 60 * 60 * 1000)) {
-      return y;
-    }
-  }
-  return start.getFullYear();
 }
 
 /**
@@ -105,11 +73,7 @@ export function parseSyllabusText(text, term = {}) {
     const tm = line.match(TIME_RE);
     let hour = 23, minute = 59;
     if (tm) {
-      hour = parseInt(tm[1], 10);
-      minute = parseInt(tm[2], 10);
-      const ampm = (tm[3] || "").toLowerCase();
-      if (ampm === "pm" && hour < 12) hour += 12;
-      if (ampm === "am" && hour === 12) hour = 0;
+      ({ hour, minute } = parseTimeMatch(tm));
     }
 
     const dateObj = new Date(year, month, day, hour, minute);
