@@ -7,22 +7,56 @@ no monthly bill.
 
 ## What's in it
 
-- **Today view** — a live clock, today's classes, what's coming up, and a
-  7-day workload heatmap.
+- **Today view** — a live clock, a **Now / Next** strip (what you're in,
+  how long is left, what's next, and passing-period countdowns), today's
+  schedule, what's coming up, and a 7-day workload heatmap.
 - **Weekly schedule** — a period-based bell schedule (like a real school's
   block/rotating schedule): you define which periods meet on each weekday
   and at what time, then classes just pick a period. A class only shows up
   on the days its period is actually scheduled — so a Wednesday with a
   shorter, later-starting day naturally shows fewer classes than a full
-  Tuesday, with no per-day duplicate data entry.
+  Tuesday, with no per-day duplicate data entry. Period start/end times are
+  entered **once** (Schedule → Period times) and auto-fill everywhere that
+  period meets. A **This week** toggle shows the next 7 days as an agenda
+  with assignments slotted under their due day.
+- **Lunch, WIN, and other blocks** — the bell schedule isn't only class
+  periods. Add lunch, a WIN/flex/advisory block, a break, etc.; "**Add a
+  block to every school day**" drops one into all your school days at once.
+- **Passing periods** — short gaps between slots are shown as passing time
+  automatically (threshold configurable in Settings). Longer gaps stay
+  "free periods" you can size a focus timer to.
+- **Class home pages** — tapping a class anywhere opens its own page:
+  when it meets, the next meeting, its assignments (with a quick add),
+  editable notes, links (Canvas, textbook, syllabus), and office hours.
+  Editing the class is one tap from there.
+- **Per-class colors** — each class picks a color, shown as a bar on every
+  schedule/Today/calendar row and a band on its home page, so blocks are
+  identifiable at a glance.
 - **Assignment tracking** — due dates, priority, effort estimate, an
-  optional link (Canvas, a doc, etc.), notes, one-tap complete.
+  optional link (Canvas, a doc, etc.), notes, one-tap complete. Filter the
+  list by class / this week / overdue and sort by due date, priority, or
+  class.
+- **`.ics` export** — Settings → Data → Export pulls your assignments and
+  recurring class meetings into a calendar file for Apple/Google Calendar.
 - **Real push notifications** — configurable reminders (default: 1 day and
   1 hour before due) delivered via the standard Web Push protocol, plus a
   one-time "overdue" nudge.
-- **Quick add** — type "Essay due Friday 5pm" and it's parsed and created
-  immediately; falls back to the full form with the title prefilled if it
-  can't find a date in what you typed, so nothing gets lost.
+- **Add anything (natural language)** — the `+` in the top bar, and the
+  quick-add field on Tasks, take one line of plain text and figure out
+  what you mean:
+  - *Assignment* — "essay for bio due Friday 5pm !" (class, due date,
+    high priority), "read ch 4 tomorrow ~45m", "pset for calc due
+    monday, weekly until dec 12".
+  - *To-do* — "bring goggles", "return the field trip form".
+  - *Class* — "AP Bio p3 with Dr. Lee in room 214".
+
+  It's a deterministic offline parser (no API key, works offline). When
+  it's sure, it creates the item with an undo toast; when it isn't, it
+  opens the matching form pre-filled so nothing is lost. If you want more
+  flexible understanding you can point it at your own endpoint under
+  Settings → Data → Natural-language assist — it's only called when the
+  built-in parser is unsure, and nothing is sent unless you set it up. No
+  model weights ship with the app.
 - **Repeating assignments** — a "Repeat weekly" option creates one
   assignment per week through a chosen end date, for things like weekly
   reading.
@@ -242,17 +276,24 @@ on — no extra setup per device beyond tapping "Enable" once on each.
 
 - **Add a term first** (Settings → Terms → Add a term) — everything else
   is scoped to a term, so this unlocks the rest of the app.
-- **Set up your bell schedule next**, in the Schedule tab → **Edit bell
-  schedule**. For each weekday, list the periods that meet and their
-  times (or mark it "no school"). This is what makes a rotating/block
-  schedule work — e.g. a normal day might have periods 1–7 plus a WIN
-  period, while Wednesday only has WIN/2/4/6 starting later. There's a
-  "copy from another day" shortcut for days that repeat the same pattern.
-- **Then add classes** in the Schedule tab: each one just picks a period
-  (e.g. "3" or "WIN") — which days and times it meets comes from the bell
-  schedule automatically.
-- **Add assignments** from the Tasks tab, or paste a syllabus schedule
-  block with **Paste syllabus** and review what it finds before importing.
+- **Set your period times once**, in the Schedule tab → **Period times**
+  (e.g. "1" = 08:00–08:50). The bell-schedule editor fills these in
+  automatically so you never re-type them.
+- **Set up your bell schedule next**, in the Schedule tab → **Bell
+  schedule**. For each weekday, list the class periods that meet plus any
+  blocks (lunch, WIN, advisory…), or mark it "no school". This is what
+  makes a rotating/block schedule work — e.g. a normal day might have
+  periods 1–7 plus a WIN block, while Wednesday only has WIN/2/4/6
+  starting later. There's a "copy from another day" shortcut, and an
+  "**Add a block to every school day**" button for things like a daily
+  WIN or lunch.
+- **Then add classes**, from the top-bar `+` ("Chemistry p3 with Mr. Ruiz
+  in 302") or the schedule's empty period rows: each one just picks a
+  period (e.g. "3" or "WIN") and a color — which days and times it meets
+  comes from the bell schedule automatically.
+- **Add assignments and to-dos** from the top-bar `+` or the Tasks tab in
+  plain language, or paste a syllabus schedule block with **Paste
+  syllabus** and review what it finds before importing.
 - **Reminder timing** is set in Settings → Notifications (minutes before
   due, comma-separated — defaults to 1 day and 1 hour). A background job
   checks every 15 minutes and sends any reminders that are due.
@@ -293,6 +334,7 @@ npm test                 # runs everything below in sequence
 node e2e-test.mjs         # backend API tests against an in-memory KV mock
 node cron-test.mjs        # reminder-sweep failure isolation (bad data, bad subscriptions)
 node date-parse-test.mjs  # natural-language date parsing ("Friday", "in 3 days", etc.)
+node nl-parse-test.mjs    # the "add anything" parser (assignment / to-do / class routing + fields)
 node dom-smoke.mjs        # full frontend flow against the real backend logic
 ```
 
@@ -306,11 +348,14 @@ future-you wants them:
 
 - **Grades/GPA** — the data model doesn't have grade weights yet; would
   need a `grades:<termId>` KV key and a small calculator UI.
-- **.ics export** — schedule/assignments are plain JS objects, so writing
-  an `.ics` string from them is a self-contained addition.
-- **Smarter syllabus parsing** — swapping the regex parser for a call to
-  an LLM API would need you to bring your own API key (kept out on
-  purpose so the app has no required paid dependency).
+- **Smarter natural-language / syllabus parsing** — `public/js/nl-parse.js`
+  has a `parseWithAssist` hook that POSTs to an endpoint you configure
+  (Settings → Data) and is only called when the offline parser is unsure.
+  Pointing it at an LLM is a self-contained addition; no key ships with
+  the app on purpose.
+- **"Class starting" reminders** — the cron sweep (`src/cron.js`) only
+  looks at assignment due dates today; a "next class in 5 min" nudge would
+  slot in alongside.
 - **Per-assignment reminder overrides** — reminders currently use one
   global offset list; `assignment.remindersSent` already exists per item,
   so overrides would mainly be a UI + one field addition.

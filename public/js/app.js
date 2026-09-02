@@ -1,7 +1,7 @@
 import { api, getToken, setToken } from "./api.js";
 import { enablePush, disablePush, currentPushStatus, pushBlockedReason } from "./push.js";
 import { parseSyllabusText } from "./syllabus-parser.js";
-import { parseNaturalDueDate } from "./date-parse.js";
+import { parse as nlParse, describeDraft, parseWithAssist } from "./nl-parse.js";
 
 // ===========================================================
 // State
@@ -12,11 +12,16 @@ const state = {
   classes: [],
   assignments: [],
   daySchedule: {},
+  periodTimes: {},
   todos: [],
   points: { total: 0, streak: 0, level: { name: "Freshman Focus", next: null } },
-  settings: { reminderOffsetsMinutes: [1440, 60], theme: "system" },
+  settings: { reminderOffsetsMinutes: [1440, 60], theme: "system", passingPeriodMaxMinutes: 15, assignmentSort: "due", nlAssist: null },
   focus: { until: null },
   currentView: "today",
+  classDetailId: null,
+  classReturnHash: "schedule",
+  assignFilter: "all", // "all" | "week" | "overdue" | a classId
+  scheduleMode: "week", // "week" | "agenda"
   calCursor: startOfMonth(new Date()),
   calSelected: new Date(),
 };
@@ -24,6 +29,20 @@ const state = {
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Mon..Sun
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
+
+const CLASS_COLORS = ["class-1", "class-2", "class-3", "class-4", "class-5", "class-6", "class-7", "class-8", "class-9", "class-10"];
+const BLOCK_GLYPH = { lunch: "🍽", win: "✦", advisory: "☕", break: "❖", activity: "◐" };
+const BLOCK_LABELS = { lunch: "Lunch", win: "WIN", advisory: "Advisory", break: "Break", activity: "Activity" };
+const SLOT_KINDS = ["class", "lunch", "win", "advisory", "break", "activity"];
+
+/** CSS custom-property style string for a class-colored row, or "" if no color. */
+function accentStyle(color) {
+  return color && CLASS_COLORS.includes(color) ? ` style="--row-accent: var(--${color})"` : "";
+}
+/** Just the accent value (for composing into a larger style attr). */
+function accentVar(color) {
+  return color && CLASS_COLORS.includes(color) ? `var(--${color})` : "var(--text-tertiary)";
+}
 
 // Nav items — rendered into both the bottom tab bar (phone) and the left
 // sidebar (wider / desktop windows). Declared here, above boot(), since
@@ -63,6 +82,7 @@ async function boot() {
   wireCalendarView();
   wireFocusView();
   wireSettingsView();
+  wireClassDetailView();
   window.addEventListener("hashchange", handleHashRoute);
   window.addEventListener("schoolapp:auth-expired", handleAuthExpired);
 
@@ -94,7 +114,7 @@ async function boot() {
     showAuth(authStatus.hasPasscode);
   }
 
-  setInterval(tickClock, 30000);
+  setInterval(tickClock, 15000);
   tickClock();
 }
 
@@ -157,6 +177,7 @@ function wireAuthForms() {
       setToken(token);
       await loadAll();
       showApp();
+      handleHashRoute();
     } catch (e) {
       setAuthError(e.message);
     }
@@ -216,9 +237,10 @@ async function loadTermScopedData() {
     state.classes = [];
     state.assignments = [];
     state.daySchedule = {};
+    state.periodTimes = {};
     return;
   }
-  const [{ classes }, { assignments }, { daySchedule }] = await Promise.all([
+  const [{ classes }, { assignments }, { daySchedule, periodTimes }] = await Promise.all([
     api.listClasses(state.activeTermId),
     api.listAssignments(state.activeTermId),
     api.getDaySchedule(state.activeTermId),
@@ -226,6 +248,7 @@ async function loadTermScopedData() {
   state.classes = classes;
   state.assignments = assignments;
   state.daySchedule = daySchedule;
+  state.periodTimes = periodTimes || {};
 }
 
 /** "While you were away" — a one-time nudge on open for anything that became due/overdue since last time. */
@@ -259,28 +282,49 @@ function classByPeriod(periodLabel) {
   return state.classes.find((c) => c.period === periodLabel) || null;
 }
 
-/** Ordered list of { period, start, end } slots for a weekday, or [] if no school that day / not configured yet. */
+function slotKind(slot) {
+  return slot.kind && SLOT_KINDS.includes(slot.kind) ? slot.kind : "class";
+}
+
+/** Ordered list of raw slots for a weekday, or [] if no school that day / not configured yet. */
 function periodsForWeekday(dow) {
   const day = state.daySchedule[String(dow)];
   return Array.isArray(day) ? day : [];
 }
 
-/** This weekday's period slots, each paired with its matched class (or null if unassigned), in time order. */
+/**
+ * This weekday's slots in time order. Class slots get `.cls` (their matched
+ * class or null); non-class blocks (lunch/WIN/…) get `.isBlock` and a `.label`.
+ */
 function scheduleForWeekday(dow) {
   return periodsForWeekday(dow)
-    .map((slot) => ({ ...slot, cls: classByPeriod(slot.period) }))
+    .map((slot) => {
+      const kind = slotKind(slot);
+      if (kind === "class") return { ...slot, kind, cls: classByPeriod(slot.period), isBlock: false };
+      return { ...slot, kind, cls: null, isBlock: true, label: slot.label || BLOCK_LABELS[kind] || "Block" };
+    })
     .sort((a, b) => a.start.localeCompare(b.start));
 }
 
-/** All distinct period labels currently defined anywhere in the day schedule, in first-seen order. */
+/** All distinct CLASS period labels currently defined anywhere in the day schedule, in first-seen order. */
 function knownPeriodLabels() {
   const seen = [];
   for (const dow of DAY_ORDER) {
     for (const slot of periodsForWeekday(dow)) {
-      if (!seen.includes(slot.period)) seen.push(slot.period);
+      if (slotKind(slot) === "class" && !seen.includes(slot.period)) seen.push(slot.period);
     }
   }
   return seen;
+}
+
+/** Weekdays (Mon-first) a given class period meets, with the slot's times. */
+function meetingsForPeriod(periodLabel) {
+  const out = [];
+  for (const dow of DAY_ORDER) {
+    const slot = periodsForWeekday(dow).find((s) => slotKind(s) === "class" && s.period === periodLabel);
+    if (slot) out.push({ dow, start: slot.start, end: slot.end });
+  }
+  return out;
 }
 
 // ===========================================================
@@ -294,6 +338,7 @@ function renderAll() {
   renderCalendar();
   renderFocus();
   renderSettings();
+  if (state.currentView === "class" && state.classDetailId) renderClassDetail();
   persistCache();
 }
 
@@ -316,6 +361,7 @@ function persistCache() {
         classes: state.classes,
         assignments: state.assignments,
         daySchedule: state.daySchedule,
+        periodTimes: state.periodTimes,
         points: state.points,
         settings: state.settings,
         cachedAt: Date.now(),
@@ -387,6 +433,17 @@ function handleHashRoute() {
     if (a) openAssignmentSheet(a);
     return;
   }
+  if (hash.startsWith("class/")) {
+    const id = hash.split("/")[1];
+    if (classById(id)) {
+      state.classDetailId = id;
+      switchView("class");
+      renderClassDetail();
+    } else {
+      switchView("schedule");
+    }
+    return;
+  }
   const known = ["today", "schedule", "assignments", "calendar", "focus", "settings"];
   switchView(known.includes(hash) ? hash : "today");
 }
@@ -394,18 +451,26 @@ function handleHashRoute() {
 function switchView(name) {
   state.currentView = name;
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
-  document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
-
-  const addBtn = document.getElementById("topbar-add");
-  addBtn.classList.toggle("hidden", name !== "schedule" && name !== "assignments");
+  // Detail views have no tab of their own — light up the tab they belong under.
+  const litTab = name === "class" ? "schedule" : name;
+  document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === litTab));
+  try {
+    const se = document.scrollingElement || document.documentElement;
+    if (se) se.scrollTop = 0;
+  } catch {
+    /* non-critical */
+  }
 }
 
 function wireFab() {
-  document.getElementById("topbar-add").addEventListener("click", () => {
-    if (!state.activeTermId) return openTermSheet(null);
-    if (state.currentView === "schedule") openClassSheet(null);
-    else if (state.currentView === "assignments") openAssignmentSheet(null);
-  });
+  document.getElementById("topbar-add").addEventListener("click", () => openOmnibox());
+}
+
+/** Navigate to a class's home page, remembering where we came from for the back button. */
+function goToClass(id) {
+  const from = location.hash.replace("#", "") || "today";
+  if (!from.startsWith("class/") && !from.startsWith("assignment/")) state.classReturnHash = from;
+  location.hash = "class/" + id;
 }
 
 // ===========================================================
@@ -428,6 +493,156 @@ function openSheet(innerHTML, { onMount } = {}) {
 
 function closeSheet() {
   document.getElementById("sheet-root").innerHTML = "";
+}
+
+// ===========================================================
+// Omnibox — one text field that creates an assignment, a to-do,
+// or a class, deciding from what you typed. Falls back to the
+// relevant sheet (pre-filled) whenever the parse is unsure.
+// ===========================================================
+function openOmnibox() {
+  openSheet(
+    `
+    <h2>Add anything</h2>
+    <input type="text" class="omni-input" id="omni-input" placeholder="e.g. “Essay for Bio due Fri 5pm !”" autocomplete="off" />
+    <div class="omni-preview" id="omni-preview">Type an assignment, a to-do, or a class.</div>
+    <button class="btn primary block mt-16" id="omni-go">Add</button>
+    <div class="omni-hints">
+      Assignment — “read ch 4 tomorrow ~2h”, “pset for calc due monday, weekly until dec 12”<br />
+      To-do — “bring goggles”, “return the field trip form”<br />
+      Class — “AP Bio p3 with Dr. Lee in room 214”
+    </div>
+  `,
+    {
+      onMount: (root) => {
+        const input = root.querySelector("#omni-input");
+        const preview = root.querySelector("#omni-preview");
+        input.focus();
+        const refresh = () => {
+          const text = input.value.trim();
+          if (!text) {
+            preview.textContent = "Type an assignment, a to-do, or a class.";
+            return;
+          }
+          const res = nlParse(text, { now: new Date(), term: activeTerm(), classes: state.classes });
+          preview.innerHTML = `<strong>${escapeHtml(describeDraft(res, { classes: state.classes }))}</strong>`;
+        };
+        input.addEventListener("input", refresh);
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") root.querySelector("#omni-go").click();
+        });
+        root.querySelector("#omni-go").addEventListener("click", guarded(() => runCapture(input.value)));
+      },
+    }
+  );
+}
+
+/** Shared entry point for the omnibox and the Assignments quick-add field. */
+async function runCapture(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text) return;
+  const ctx = { now: new Date(), term: activeTerm(), classes: state.classes };
+  let res = nlParse(text, ctx);
+  if (res.confidence === "low" && state.settings.nlAssist) {
+    const assisted = await parseWithAssist(text, ctx, state.settings.nlAssist).catch(() => null);
+    if (assisted) res = { confidence: "low", ...assisted };
+  }
+
+  if (res.kind === "todo") {
+    if (!res.draft.title) return;
+    const { todo } = await api.createTodo(res.draft.title);
+    state.todos.push(todo);
+    renderTodos();
+    closeSheet();
+    toast(`Added to-do — “${todo.title}”`, {
+      action: {
+        label: "Undo",
+        onClick: guarded(async () => {
+          await api.deleteTodo(todo.id);
+          state.todos = state.todos.filter((t) => t.id !== todo.id);
+          renderTodos();
+        }),
+      },
+    });
+    return;
+  }
+
+  if (!state.activeTermId) {
+    closeSheet();
+    toast("Add a term first — then you can add classes and assignments.");
+    return openTermSheet(null);
+  }
+
+  if (res.kind === "class") {
+    if (res.confidence === "low" || !res.draft.title || !res.draft.period) {
+      closeSheet();
+      return openClassSheet(null, { prefill: res.draft });
+    }
+    const termId = state.activeTermId;
+    const { class: cls } = await api.createClass(termId, {
+      title: res.draft.title,
+      period: res.draft.period,
+      instructor: res.draft.instructor || "",
+      location: res.draft.location || "",
+    });
+    await refreshTermScoped();
+    closeSheet();
+    toast(`Added class — “${cls.title}”`, {
+      action: {
+        label: "Undo",
+        onClick: guarded(async () => {
+          await api.deleteClass(termId, cls.id);
+          if (state.activeTermId === termId) await refreshTermScoped();
+        }),
+      },
+    });
+    return;
+  }
+
+  // assignment
+  if (res.confidence === "low" || !res.draft.dueDate) {
+    closeSheet();
+    return openAssignmentSheet(null, { prefill: res.draft });
+  }
+  closeSheet();
+  await createAssignmentFromDraft(res.draft, { toastEdit: true });
+}
+
+/** Turn an assignment draft (from nl-parse) into one or more real assignments. */
+async function createAssignmentFromDraft(draft, { toastEdit = false } = {}) {
+  const payload = {
+    title: draft.title,
+    classId: draft.classId || null,
+    dueDate: draft.dueDate.toISOString(),
+    priority: draft.priority || "medium",
+    estimatedMinutes: draft.estimatedMinutes || null,
+    link: draft.link || null,
+  };
+  if (draft.repeat) {
+    const term = activeTerm();
+    const until = draft.repeat.until || (term ? new Date(term.endDate) : new Date(draft.dueDate.getTime() + 8 * 7 * 86400000));
+    await createWeeklyRepeats(payload, draft.dueDate, until);
+    await refreshTermScoped();
+    return;
+  }
+  const { assignment } = await api.createAssignment(state.activeTermId, payload);
+  await refreshTermScoped();
+  const due = draft.dueDate;
+  toast(`Added — due ${due.toLocaleDateString([], { month: "short", day: "numeric" })} ${due.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`, {
+    action: toastEdit
+      ? { label: "Edit", onClick: () => openAssignmentSheet(state.assignments.find((a) => a.id === assignment.id) || assignment) }
+      : undefined,
+  });
+}
+
+/** Reload the current term's classes/assignments/schedule and re-render, tolerating a transient failure. */
+async function refreshTermScoped() {
+  try {
+    await loadTermScopedData();
+    renderAll();
+  } catch {
+    toast("Saved, but couldn't refresh the view — switch tabs to reload.", { ms: 5000 });
+  }
 }
 
 // ===========================================================
@@ -514,6 +729,8 @@ function tickClock() {
   const dateEl = document.getElementById("clock-date");
   if (timeEl) timeEl.textContent = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   if (dateEl) dateEl.textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  // Keep the "now / next" strip live between full re-renders.
+  if (state.currentView === "today") renderNowNext();
 }
 
 // ===========================================================
@@ -555,6 +772,9 @@ function renderToday() {
   const classesEl = document.getElementById("today-classes");
   const upcomingEl = document.getElementById("today-upcoming");
 
+  renderOnboarding();
+  renderNowNext();
+
   if (!state.activeTermId) {
     classesEl.innerHTML = emptyState("📚", "No term yet", "Add a term in Settings to start building your schedule.");
     upcomingEl.innerHTML = "";
@@ -567,19 +787,20 @@ function renderToday() {
   }
 
   const todayDow = new Date().getDay();
-  const todaysClasses = scheduleForWeekday(todayDow).filter((s) => s.cls);
+  const slots = scheduleForWeekday(todayDow);
+  const classCount = slots.filter((s) => s.cls).length;
 
-  if (todaysClasses.length) {
-    const gaps = computeFreePeriods(todaysClasses);
+  if (slots.length) {
+    const gaps = computeGaps(slots);
     let html = "";
-    todaysClasses.forEach((s, i) => {
-      html += classFlapRow(s);
+    slots.forEach((s, i) => {
+      html += slotRow(s);
       const gap = gaps.find((g) => g.afterIndex === i);
-      if (gap) html += freePeriodRow(gap);
+      if (gap) html += gap.passing ? passingStrip(gap) : freePeriodRow(gap);
     });
     classesEl.innerHTML = html;
   } else {
-    classesEl.innerHTML = emptyState("☀️", "No classes today", periodsForWeekday(todayDow).length ? "Free periods today." : "Enjoy the free day.");
+    classesEl.innerHTML = emptyState("☀️", "No school today", "Nothing on the bell schedule for today.");
   }
   classesEl.querySelectorAll("[data-free-period]").forEach((row) => {
     row.addEventListener("click", () => {
@@ -607,12 +828,106 @@ function renderToday() {
     doNextWrap.classList.add("hidden");
   }
 
-  document.getElementById("stat-classes-today").textContent = todaysClasses.length;
+  document.getElementById("stat-classes-today").textContent = classCount;
   document.getElementById("stat-due-today").textContent = pending.filter((a) => isSameDay(new Date(a.dueDate), new Date())).length;
   document.getElementById("stat-overdue").textContent = pending.filter((a) => new Date(a.dueDate) < new Date()).length;
 
   renderHeatmap();
   bindFlapRowClicks(classesEl, upcomingEl);
+}
+
+/** The live "Now / Next" strip at the top of Today. Recomputed every clock tick. */
+function renderNowNext() {
+  const el = document.getElementById("now-next");
+  if (!el) return;
+  const now = new Date();
+  if (!state.activeTermId) return void (el.innerHTML = "");
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const slots = scheduleForWeekday(now.getDay()).map((s) => ({
+    ...s,
+    sMin: timeStrToMinutes(s.start),
+    eMin: timeStrToMinutes(s.end),
+  }));
+
+  const slotName = (s) => (s.isBlock ? s.label : s.cls ? s.cls.title : `Period ${s.period}`);
+  const cardHTML = ({ kind, title, sub, cls, pct, mod }) => {
+    const accent = cls && cls.color ? ` style="--row-accent: var(--${cls.color})"` : "";
+    return `<div class="now-card ${mod || ""}"${accent}>
+      <div class="now-accent"></div>
+      <div class="kicker">${kind}</div>
+      <div class="now-title">${escapeHtml(title)}</div>
+      ${sub ? `<div class="now-sub">${escapeHtml(sub)}</div>` : ""}
+      ${typeof pct === "number" ? `<div class="now-progress"><i style="width:${Math.max(2, Math.min(100, pct))}%"></i></div>` : ""}
+    </div>`;
+  };
+
+  const cards = [];
+  const current = slots.find((s) => nowMin >= s.sMin && nowMin < s.eMin);
+  const next = slots.filter((s) => s.sMin > nowMin).sort((a, b) => a.sMin - b.sMin)[0];
+  const threshold = Number(state.settings.passingPeriodMaxMinutes) || 15;
+
+  if (current) {
+    const left = current.eMin - nowMin;
+    cards.push(
+      cardHTML({
+        kind: "Now",
+        title: slotName(current),
+        sub: `${left} min left · until ${timeStrToLabel(current.end)}${current.cls?.location ? " · " + current.cls.location : ""}`,
+        cls: current.cls,
+        pct: ((nowMin - current.sMin) / (current.eMin - current.sMin)) * 100,
+      })
+    );
+    if (next) cards.push(cardHTML({ kind: "Next", title: slotName(next), sub: `at ${timeStrToLabel(next.start)}`, cls: next.cls }));
+  } else if (next) {
+    const gap = next.sMin - nowMin;
+    const hadEarlier = slots.some((s) => s.eMin <= nowMin);
+    if (hadEarlier && gap <= threshold) {
+      cards.push(
+        cardHTML({
+          kind: "Passing",
+          mod: "passing",
+          title: `${gap} min → ${slotName(next)}${next.cls?.location ? " · " + next.cls.location : ""}`,
+        })
+      );
+    } else {
+      cards.push(
+        cardHTML({
+          kind: "Next",
+          mod: "gap",
+          title: slotName(next),
+          sub: `at ${timeStrToLabel(next.start)}${gap < 120 ? ` · in ${gap} min` : ""}`,
+          cls: next.cls,
+        })
+      );
+    }
+  } else if (slots.length) {
+    const tm = firstClassOnUpcomingDay(now);
+    cards.push(
+      cardHTML({
+        kind: "Done for the day",
+        mod: "done",
+        title: tm ? `${tm.dayLabel}: first up ${tm.name} at ${timeStrToLabel(tm.start)}` : "Nothing left today",
+      })
+    );
+  }
+  el.innerHTML = cards.join("");
+}
+
+/** Look ahead up to a week for the next day that has a class slot. */
+function firstClassOnUpcomingDay(from) {
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(from.getTime() + i * 86400000);
+    const slots = scheduleForWeekday(d.getDay());
+    const firstClass = slots.find((s) => !s.isBlock);
+    if (firstClass) {
+      return {
+        dayLabel: i === 1 ? "Tomorrow" : DAY_NAMES[d.getDay()],
+        name: firstClass.cls ? firstClass.cls.title : `Period ${firstClass.period}`,
+        start: firstClass.start,
+      };
+    }
+  }
+  return null;
 }
 
 /** Highest-urgency × priority pending assignment — a single actionable suggestion, not just the soonest due date. */
@@ -644,17 +959,25 @@ function timeStrToMinutes(hhmm) {
   return h * 60 + m;
 }
 
-/** Gaps of 20+ minutes between consecutive classes today, suggested as focus-session slots. */
-function computeFreePeriods(classSlots) {
-  const MIN_GAP_MINUTES = 20;
+/**
+ * Gaps between consecutive slots. A gap shorter than the passing-period
+ * threshold is marked `.passing` (rendered as a thin strip); a longer one
+ * is a free period offered as a focus-timer slot.
+ */
+function computeGaps(slots) {
+  const threshold = Number(state.settings.passingPeriodMaxMinutes) || 15;
   const gaps = [];
-  for (let i = 0; i < classSlots.length - 1; i++) {
-    const gapMin = timeStrToMinutes(classSlots[i + 1].start) - timeStrToMinutes(classSlots[i].end);
-    if (gapMin >= MIN_GAP_MINUTES) {
-      gaps.push({ afterIndex: i, start: classSlots[i].end, end: classSlots[i + 1].start, minutes: gapMin });
+  for (let i = 0; i < slots.length - 1; i++) {
+    const gapMin = timeStrToMinutes(slots[i + 1].start) - timeStrToMinutes(slots[i].end);
+    if (gapMin > 0) {
+      gaps.push({ afterIndex: i, start: slots[i].end, end: slots[i + 1].start, minutes: gapMin, passing: gapMin < threshold });
     }
   }
   return gaps;
+}
+
+function passingStrip(gap) {
+  return `<div class="passing-strip">${gap.minutes} min passing</div>`;
 }
 
 function freePeriodRow(gap) {
@@ -663,6 +986,17 @@ function freePeriodRow(gap) {
     <div class="row-body">
       <div class="row-title" style="color:var(--text-tertiary);">Free period · ${formatMinutes(gap.minutes)}</div>
       <div class="row-sub">Tap to set a focus timer for this gap</div>
+    </div>
+  </div>`;
+}
+
+/** A schedule list row for any slot — a class, an empty class period, or a named block. */
+function slotRow(s) {
+  if (!s.isBlock) return classFlapRow(s);
+  return `<div class="list-row block-row">
+    <div class="row-time rounded">${timeStrToLabel(s.start)}</div>
+    <div class="row-body">
+      <div class="row-title">${BLOCK_GLYPH[s.kind] || "•"} ${escapeHtml(s.label)}</div>
     </div>
   </div>`;
 }
@@ -714,7 +1048,7 @@ function classFlapRow(slot) {
     </div>`;
   }
   const c = slot.cls;
-  return `<div class="list-row" data-class-id="${c.id}">
+  return `<div class="list-row" data-class-id="${c.id}"${accentStyle(c.color)}>
     <div class="row-time rounded">${timeLabel}</div>
     <div class="row-body">
       <div class="row-title">${escapeHtml(c.title)}</div>
@@ -730,7 +1064,7 @@ function assignmentFlapRow(a) {
   const overdue = due.overdue && a.status !== "done";
   const effortLabel = a.estimatedMinutes ? ` · ${formatMinutes(a.estimatedMinutes)}` : "";
   const linkIcon = a.link ? ` <span class="row-link-icon">${LINK_SVG}</span>` : "";
-  return `<div class="list-row assignment-row${a.status === "done" ? " done" : ""}" data-assignment-id="${a.id}">
+  return `<div class="list-row assignment-row${a.status === "done" ? " done" : ""}" data-assignment-id="${a.id}"${accentStyle(cls?.color)}>
     <button class="check" data-toggle-complete="${a.id}" aria-label="Mark complete">${CHECK_SVG}</button>
     <div class="row-body">
       <div class="row-title"><span class="priority-dot priority-${a.priority}"></span>${escapeHtml(a.title)}${linkIcon}</div>
@@ -744,7 +1078,7 @@ function bindFlapRowClicks(...containers) {
     container.querySelectorAll("[data-class-id]").forEach((row) => {
       row.addEventListener("click", (e) => {
         if (e.target.closest("[data-toggle-complete]")) return;
-        openClassSheet(classById(row.dataset.classId));
+        goToClass(row.dataset.classId);
       });
     });
     container.querySelectorAll("[data-empty-period]").forEach((row) => {
@@ -792,24 +1126,62 @@ async function toggleComplete(id) {
 // SCHEDULE view
 // ===========================================================
 function renderSchedule() {
-  const el = document.getElementById("schedule-week");
+  const weekEl = document.getElementById("schedule-week");
+  const agendaEl = document.getElementById("schedule-agenda");
+  const isAgenda = state.scheduleMode === "agenda";
+  weekEl.classList.toggle("hidden", isAgenda);
+  agendaEl.classList.toggle("hidden", !isAgenda);
+  document.querySelectorAll("#schedule-seg .seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.schedMode === state.scheduleMode));
+
   if (!state.activeTermId) {
-    el.innerHTML = emptyState("🗓️", "No term yet", "Add a term in Settings, then build your weekly schedule here.");
+    weekEl.innerHTML = emptyState("🗓️", "No term yet", "Add a term in Settings, then build your weekly schedule here.");
+    agendaEl.innerHTML = "";
     return;
   }
   const configuredDays = DAY_ORDER.filter((dow) => periodsForWeekday(dow).length > 0);
   if (configuredDays.length === 0) {
-    el.innerHTML = emptyState("🔔", "Set up your bell schedule", "Tap \"Edit bell schedule\" above to enter which periods meet on each day — then you can assign classes to periods.");
+    weekEl.innerHTML = emptyState("🔔", "Set up your bell schedule", 'Tap "Bell schedule" above to enter which periods meet each day — then assign classes to periods.');
+    agendaEl.innerHTML = "";
     return;
   }
+
   let html = "";
   for (const dow of configuredDays) {
     const slots = scheduleForWeekday(dow);
     html += `<div class="section-title">${DAY_NAMES[dow]}</div><div class="list-card">`;
-    html += slots.map((s) => classFlapRow(s)).join("");
+    html += slots.map((s) => slotRow(s)).join("");
     html += `</div>`;
   }
-  el.innerHTML = html;
+  weekEl.innerHTML = html;
+  bindFlapRowClicks(weekEl);
+
+  if (isAgenda) renderAgenda(agendaEl);
+}
+
+/** "This week" list — each of the next 7 days with its classes and anything due that day. */
+function renderAgenda(el) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let html = "";
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today.getTime() + i * 86400000);
+    const slots = scheduleForWeekday(d.getDay()).filter((s) => !s.isBlock);
+    const due = state.assignments
+      .filter((a) => a.status !== "done" && isSameDay(new Date(a.dueDate), d))
+      .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+    if (!slots.length && !due.length) continue;
+    html += `<div class="agenda-day">
+      <div class="agenda-head${i === 0 ? " is-today" : ""}">
+        <span>${i === 0 ? "Today" : d.toLocaleDateString([], { weekday: "long" })}</span>
+        <span>${d.toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+      </div>
+      <div class="list-card">
+        ${slots.map((s) => slotRow(s)).join("")}
+        ${due.map((a) => assignmentFlapRow(a)).join("")}
+      </div>
+    </div>`;
+  }
+  el.innerHTML = html || emptyState("🎉", "Clear week", "No classes or due dates in the next 7 days.");
   bindFlapRowClicks(el);
 }
 
@@ -818,51 +1190,124 @@ function wireScheduleView() {
     if (!state.activeTermId) return toast("Add a term first.");
     openDayScheduleOverviewSheet();
   });
+  document.getElementById("btn-period-times").addEventListener("click", () => {
+    if (!state.activeTermId) return toast("Add a term first.");
+    openPeriodTimesSheet();
+  });
+  document.querySelectorAll("#schedule-seg .seg-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      state.scheduleMode = b.dataset.schedMode;
+      renderSchedule();
+    });
+  });
 }
 
 // ---- Bell schedule (day schedule) editor ----
+function daySummary(raw) {
+  if (raw === undefined) return "Not set up";
+  if (!Array.isArray(raw) || raw.length === 0) return "No school";
+  const first = [...raw].sort((a, b) => a.start.localeCompare(b.start))[0];
+  const classes = raw.filter((s) => slotKind(s) === "class").length;
+  const blocks = raw.length - classes;
+  return `${classes} class${classes === 1 ? "" : "es"}${blocks ? ` + ${blocks} block${blocks === 1 ? "" : "s"}` : ""}, from ${timeStrToLabel(first.start)}`;
+}
+
 function openDayScheduleOverviewSheet() {
-  const rows = DAY_ORDER.map((dow) => {
-    const raw = state.daySchedule[String(dow)];
-    const configured = raw !== undefined;
-    const slots = Array.isArray(raw) ? raw : [];
-    let sub;
-    if (!configured) sub = "Not set up";
-    else if (slots.length === 0) sub = "No school";
-    else {
-      const first = [...slots].sort((a, b) => a.start.localeCompare(b.start))[0];
-      sub = `${slots.length} period${slots.length === 1 ? "" : "s"}, starts ${timeStrToLabel(first.start)}`;
-    }
-    return `<div class="settings-row" style="cursor:pointer;" data-edit-day="${dow}">
+  const rows = DAY_ORDER.map(
+    (dow) => `<div class="settings-row" style="cursor:pointer;" data-edit-day="${dow}">
       <div>
         <div class="label">${DAY_NAMES[dow]}</div>
-        <div class="sub">${sub}</div>
+        <div class="sub">${daySummary(state.daySchedule[String(dow)])}</div>
       </div>
       <span class="chevron">${CHEVRON_SVG}</span>
-    </div>`;
-  }).join("");
+    </div>`
+  ).join("");
 
   openSheet(
     `
     <h2>Bell schedule</h2>
-    <p class="small" style="color:var(--text-secondary); margin:-8px 0 14px;">Set which periods meet each day, and their times. When you add a class you'll just pick a period — the days and times come from here, so a period that isn't scheduled on a given day (like Wednesdays) simply won't show a class that day.</p>
+    <p class="small text-muted" style="margin:-8px 0 14px;">Set which periods meet each day, plus lunch, WIN and other blocks. Classes just pick a period — days and times come from here, so a period not scheduled on a day (like Wednesdays) simply won't show that day.</p>
     <div class="settings-list">${rows}</div>
-    <button class="btn ghost block mt-16" id="dayschedule-done">Done</button>
+    <button class="btn ghost block mt-16" id="add-everyday-block">+ Add a block to every school day</button>
+    <button class="btn ghost block mt-8" id="dayschedule-done">Done</button>
   `,
     {
       onMount: (root) => {
         root.querySelectorAll("[data-edit-day]").forEach((row) => {
           row.addEventListener("click", () => openDayEditorSheet(Number(row.dataset.editDay)));
         });
+        root.querySelector("#add-everyday-block").addEventListener("click", openEveryDayBlockSheet);
         root.querySelector("#dayschedule-done").addEventListener("click", closeSheet);
       },
     }
   );
 }
 
+/** Insert one named block (WIN, Lunch, …) at the same time into every day that currently has school. */
+function openEveryDayBlockSheet() {
+  const meetingDays = DAY_ORDER.filter((d) => periodsForWeekday(d).length > 0);
+  openSheet(
+    `
+    <h2>Block on every school day</h2>
+    <p class="small text-muted" style="margin:-8px 0 14px;">Adds this to all ${meetingDays.length} day${meetingDays.length === 1 ? "" : "s"} that currently have school — no need to edit each one.</p>
+    <div class="field">
+      <label>Type</label>
+      <select id="eb-kind">
+        ${["win", "lunch", "advisory", "break", "activity"].map((k) => `<option value="${k}">${BLOCK_LABELS[k]}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field"><label>Name (optional)</label><input type="text" id="eb-label" placeholder="WIN" /></div>
+    <div class="field-row">
+      <div class="field"><label>Start</label><input type="time" id="eb-start" /></div>
+      <div class="field"><label>End</label><input type="time" id="eb-end" /></div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn ghost" id="eb-cancel">Cancel</button>
+      <button class="btn primary block" id="eb-save">Add to every day</button>
+    </div>
+  `,
+    {
+      onMount: (root) => {
+        root.querySelector("#eb-cancel").addEventListener("click", openDayScheduleOverviewSheet);
+        root.querySelector("#eb-save").addEventListener(
+          "click",
+          guarded(async () => {
+            const kind = root.querySelector("#eb-kind").value;
+            const label = root.querySelector("#eb-label").value.trim() || BLOCK_LABELS[kind];
+            const start = root.querySelector("#eb-start").value;
+            const end = root.querySelector("#eb-end").value;
+            if (!start || !end) return toast("Pick a start and end time.");
+            if (start >= end) return toast("End time must be after the start.");
+            let ok = 0;
+            for (const dow of meetingDays) {
+              const next = [...periodsForWeekday(dow), { kind, label, start, end }];
+              try {
+                await api.setDaySchedule(state.activeTermId, dow, next);
+                ok++;
+              } catch (e) {
+                toast(e?.message || `Couldn't update ${DAY_NAMES[dow]}.`, { ms: 4000 });
+              }
+            }
+            await loadTermScopedData();
+            renderAll();
+            toast(`Added ${label} to ${ok} day${ok === 1 ? "" : "s"}.`);
+            openDayScheduleOverviewSheet();
+          })
+        );
+      },
+    }
+  );
+}
+
+const DAY_KIND_OPTIONS = ["class", "lunch", "win", "advisory", "break", "activity"];
+
 function openDayEditorSheet(dow) {
   const existing = state.daySchedule[String(dow)];
-  let periods = Array.isArray(existing) ? existing.map((p) => ({ ...p })) : [];
+  // internal row shape: { kind, name, start, end } — `name` is the period
+  // label for a class, or the display label for a block.
+  let rows = Array.isArray(existing)
+    ? existing.map((p) => ({ kind: slotKind(p), name: slotKind(p) === "class" ? p.period : p.label || "", start: p.start || "", end: p.end || "" }))
+    : [];
   let noSchool = existing === null;
 
   const otherDaysWithData = DAY_ORDER.filter(
@@ -870,17 +1315,20 @@ function openDayEditorSheet(dow) {
   );
 
   function rowsHTML() {
-    if (periods.length === 0) {
-      return `<p class="small" style="color:var(--text-tertiary); padding:6px 2px 10px;">No periods yet — add one below.</p>`;
+    if (rows.length === 0) {
+      return `<p class="small text-muted" style="padding:6px 2px 10px;">Nothing yet — add a period or block below.</p>`;
     }
-    return periods
+    return rows
       .map(
         (p, i) => `
       <div class="period-row" data-idx="${i}">
-        <input type="text" class="period-label" data-field="period" value="${escapeHtml(p.period)}" placeholder="1" />
-        <input type="time" data-field="start" value="${p.start || ""}" />
-        <input type="time" data-field="end" value="${p.end || ""}" />
-        <button type="button" class="period-remove" data-remove="${i}" aria-label="Remove period">${CLOSE_SVG}</button>
+        <select data-field="kind" class="period-kind">
+          ${DAY_KIND_OPTIONS.map((k) => `<option value="${k}" ${p.kind === k ? "selected" : ""}>${k === "class" ? "Class" : BLOCK_LABELS[k]}</option>`).join("")}
+        </select>
+        <input type="text" class="period-label" data-field="name" value="${escapeHtml(p.name)}" placeholder="${p.kind === "class" ? "1" : BLOCK_LABELS[p.kind] || "Name"}" />
+        <input type="time" data-field="start" value="${p.start}" />
+        <input type="time" data-field="end" value="${p.end}" />
+        <button type="button" class="period-remove" data-remove="${i}" aria-label="Remove">${CLOSE_SVG}</button>
       </div>`
       )
       .join("");
@@ -905,9 +1353,12 @@ function openDayEditorSheet(dow) {
       </div>`
           : ""
       }
-      <label style="font-size:12.5px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:8px;">Periods, in order</label>
+      <label style="font-size:12.5px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:8px;">In time order</label>
       <div id="period-rows">${rowsHTML()}</div>
-      <button type="button" class="btn ghost block mt-8" id="add-period">+ Add period</button>
+      <div class="field-row mt-8">
+        <button type="button" class="btn ghost block" id="add-period">+ Class period</button>
+        <button type="button" class="btn ghost block" id="add-block">+ Block</button>
+      </div>
     </div>
     <div class="sheet-actions mt-16">
       <button class="btn ghost" id="day-cancel">Cancel</button>
@@ -918,10 +1369,7 @@ function openDayEditorSheet(dow) {
       onMount: (root) => {
         const wrap = root.querySelector("#day-periods-wrap");
         const rowsEl = root.querySelector("#period-rows");
-
-        function refreshRows() {
-          rowsEl.innerHTML = rowsHTML();
-        }
+        const refreshRows = () => (rowsEl.innerHTML = rowsHTML());
 
         root.querySelector("#day-meets").addEventListener("change", (e) => {
           noSchool = !e.target.checked;
@@ -930,19 +1378,36 @@ function openDayEditorSheet(dow) {
 
         root.querySelector("#day-copy-from")?.addEventListener("change", (e) => {
           if (!e.target.value) return;
-          periods = (state.daySchedule[e.target.value] || []).map((p) => ({ ...p }));
+          rows = (state.daySchedule[e.target.value] || []).map((p) => ({
+            kind: slotKind(p),
+            name: slotKind(p) === "class" ? p.period : p.label || "",
+            start: p.start || "",
+            end: p.end || "",
+          }));
           refreshRows();
         });
 
         root.querySelector("#add-period").addEventListener("click", () => {
-          periods.push({ period: "", start: "", end: "" });
+          rows.push({ kind: "class", name: "", start: "", end: "" });
+          refreshRows();
+        });
+        root.querySelector("#add-block").addEventListener("click", () => {
+          rows.push({ kind: "lunch", name: "", start: "", end: "" });
           refreshRows();
         });
 
         rowsEl.addEventListener("click", (e) => {
           const btn = e.target.closest("[data-remove]");
           if (!btn) return;
-          periods.splice(Number(btn.dataset.remove), 1);
+          rows.splice(Number(btn.dataset.remove), 1);
+          refreshRows();
+        });
+
+        // kind change re-renders (placeholder depends on kind)
+        rowsEl.addEventListener("change", (e) => {
+          const rowEl = e.target.closest("[data-idx]");
+          if (!rowEl || e.target.dataset.field !== "kind") return;
+          rows[Number(rowEl.dataset.idx)].kind = e.target.value;
           refreshRows();
         });
 
@@ -950,10 +1415,20 @@ function openDayEditorSheet(dow) {
           const rowEl = e.target.closest("[data-idx]");
           const field = e.target.dataset.field;
           if (!rowEl || !field) return;
-          periods[Number(rowEl.dataset.idx)][field] = e.target.value;
+          const row = rows[Number(rowEl.dataset.idx)];
+          row[field] = e.target.value;
+          // Auto-fill a class period's times from the term default the moment its label is known.
+          if (field === "name" && row.kind === "class" && state.periodTimes[e.target.value] && !row.start && !row.end) {
+            row.start = state.periodTimes[e.target.value].start;
+            row.end = state.periodTimes[e.target.value].end;
+            const startEl = rowEl.querySelector('[data-field="start"]');
+            const endEl = rowEl.querySelector('[data-field="end"]');
+            if (startEl) startEl.value = row.start;
+            if (endEl) endEl.value = row.end;
+          }
         });
 
-        root.querySelector("#day-cancel").addEventListener("click", closeSheet);
+        root.querySelector("#day-cancel").addEventListener("click", openDayScheduleOverviewSheet);
 
         root.querySelector("#day-save").addEventListener(
           "click",
@@ -961,11 +1436,18 @@ function openDayEditorSheet(dow) {
             if (noSchool) {
               await api.setDaySchedule(state.activeTermId, dow, null);
             } else {
-              const cleaned = periods.map((p) => ({ period: p.period.trim(), start: p.start, end: p.end }));
-              if (cleaned.length === 0) return toast('Add at least one period, or turn off "School meets this day."');
-              if (cleaned.some((p) => !p.period)) return toast("Every period needs a label.");
-              if (cleaned.some((p) => !p.start || !p.end)) return toast("Every period needs a start and end time.");
-              await api.setDaySchedule(state.activeTermId, dow, cleaned);
+              if (rows.length === 0) return toast('Add something, or turn off "School meets this day."');
+              const payload = [];
+              for (const r of rows) {
+                if (!r.start || !r.end) return toast("Every row needs a start and end time.");
+                if (r.kind === "class") {
+                  if (!r.name.trim()) return toast("Every class period needs a label.");
+                  payload.push({ period: r.name.trim(), start: r.start, end: r.end, kind: "class" });
+                } else {
+                  payload.push({ kind: r.kind, label: r.name.trim() || BLOCK_LABELS[r.kind], start: r.start, end: r.end });
+                }
+              }
+              await api.setDaySchedule(state.activeTermId, dow, payload);
             }
             await loadTermScopedData();
             renderAll();
@@ -977,28 +1459,119 @@ function openDayEditorSheet(dow) {
   );
 }
 
-function openClassSheet(cls, { prefillPeriod } = {}) {
+// ---- Global per-term period times (entered once, reused every day a period meets) ----
+function openPeriodTimesSheet() {
+  const labels = [...new Set([...knownPeriodLabels(), ...Object.keys(state.periodTimes)])];
+  let extra = [];
+
+  const rowFor = (label) => {
+    const t = state.periodTimes[label] || {};
+    return `<div class="period-row" data-label="${escapeHtml(label)}">
+      <div class="period-label" style="display:flex;align-items:center;justify-content:center;">${escapeHtml(label)}</div>
+      <input type="time" data-pt="start" value="${t.start || ""}" />
+      <input type="time" data-pt="end" value="${t.end || ""}" />
+    </div>`;
+  };
+
+  openSheet(
+    `
+    <h2>Period times</h2>
+    <p class="small text-muted" style="margin:-8px 0 14px;">Default start/end for each period. The bell-schedule editor fills these in automatically, so you only enter them once.</p>
+    <div id="pt-rows">${labels.length ? labels.map(rowFor).join("") : `<p class="small text-muted">No class periods defined yet — add them in the bell schedule first, or add one below.</p>`}</div>
+    <div class="field-row mt-8" style="align-items:flex-end;">
+      <div class="field" style="margin:0;"><label>Add a period label</label><input type="text" id="pt-new-label" placeholder="e.g. 8 or WIN" /></div>
+      <button class="btn ghost" id="pt-add">Add</button>
+    </div>
+    <div class="sheet-actions mt-16">
+      <button class="btn ghost" id="pt-cancel">Cancel</button>
+      <button class="btn primary block" id="pt-save">Save</button>
+    </div>
+  `,
+    {
+      onMount: (root) => {
+        root.querySelector("#pt-cancel").addEventListener("click", closeSheet);
+        root.querySelector("#pt-add").addEventListener("click", () => {
+          const v = root.querySelector("#pt-new-label").value.trim();
+          if (!v || root.querySelector(`[data-label="${CSS.escape(v)}"]`)) return;
+          extra.push(v);
+          root.querySelector("#pt-rows").insertAdjacentHTML("beforeend", rowFor(v));
+          root.querySelector("#pt-new-label").value = "";
+        });
+        root.querySelector("#pt-save").addEventListener(
+          "click",
+          guarded(async () => {
+            const map = {};
+            let bad = false;
+            root.querySelectorAll("#pt-rows [data-label]").forEach((row) => {
+              const label = row.dataset.label;
+              const start = row.querySelector('[data-pt="start"]').value;
+              const end = row.querySelector('[data-pt="end"]').value;
+              if (!start && !end) return; // skip blank rows
+              if (!start || !end || start >= end) bad = true;
+              else map[label] = { start, end };
+            });
+            if (bad) return toast("Each filled-in period needs a valid start before end.");
+            const { periodTimes } = await api.setPeriodTimes(state.activeTermId, map);
+            state.periodTimes = periodTimes;
+            closeSheet();
+            toast("Period times saved.");
+          })
+        );
+      },
+    }
+  );
+}
+
+function openClassSheet(cls, { prefillPeriod, prefill } = {}) {
   const isEdit = Boolean(cls);
   const periodOptions = knownPeriodLabels();
-  const currentPeriod = cls?.period || prefillPeriod || "";
+  const currentPeriod = cls?.period || prefill?.period || prefillPeriod || "";
+  const usedColors = state.classes.filter((c) => c.id !== cls?.id).map((c) => c.color);
+  let chosenColor = cls?.color || CLASS_COLORS.find((c) => !usedColors.includes(c)) || CLASS_COLORS[0];
+  let links = (cls?.links || []).map((l) => ({ ...l }));
+
+  const linkRowsHTML = () =>
+    links.length
+      ? links
+          .map(
+            (l, i) => `<div class="period-row" data-link-idx="${i}">
+        <input type="text" class="row-inline-edit" data-link-field="label" value="${escapeHtml(l.label || "")}" placeholder="Canvas" />
+        <input type="text" class="row-inline-edit" data-link-field="url" value="${escapeHtml(l.url || "")}" placeholder="canvas.school.edu/…" />
+        <button type="button" class="period-remove" data-link-remove="${i}" aria-label="Remove link">${CLOSE_SVG}</button>
+      </div>`
+          )
+          .join("")
+      : `<p class="small text-muted" style="padding:4px 2px 8px;">No links yet.</p>`;
 
   openSheet(
     `
     <h2>${isEdit ? "Edit class" : "Add class"}</h2>
-    <div class="field"><label>Class name</label><input type="text" id="cls-title" value="${escapeHtml(cls?.title || "")}" placeholder="Organic Chemistry" /></div>
+    <div class="field"><label>Class name</label><input type="text" id="cls-title" value="${escapeHtml(cls?.title || prefill?.title || "")}" placeholder="Organic Chemistry" /></div>
     <div class="field">
       <label>Period</label>
       <input type="text" id="cls-period" list="cls-period-options" value="${escapeHtml(currentPeriod)}" placeholder="e.g. 3, or WIN" />
       <datalist id="cls-period-options">
         ${periodOptions.map((p) => `<option value="${escapeHtml(p)}"></option>`).join("")}
       </datalist>
-      <p class="small" style="color:var(--text-tertiary); margin:6px 2px 0;">Which days and times this meets comes from your bell schedule — set that up under Schedule → Edit bell schedule.</p>
+      <p class="small text-muted" style="margin:6px 2px 0;">Days and times come from your bell schedule (Schedule → Bell schedule).</p>
+    </div>
+    <div class="field">
+      <label>Color</label>
+      <div class="class-color-dots" id="cls-colors">
+        ${CLASS_COLORS.map((c) => `<button type="button" data-color="${c}" class="${c === chosenColor ? "sel" : ""}" style="background:var(--${c})" aria-label="${c}"></button>`).join("")}
+      </div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Instructor</label><input type="text" id="cls-instructor" value="${escapeHtml(cls?.instructor || "")}" /></div>
-      <div class="field"><label>Location</label><input type="text" id="cls-location" value="${escapeHtml(cls?.location || "")}" /></div>
+      <div class="field"><label>Instructor</label><input type="text" id="cls-instructor" value="${escapeHtml(cls?.instructor || prefill?.instructor || "")}" /></div>
+      <div class="field"><label>Location</label><input type="text" id="cls-location" value="${escapeHtml(cls?.location || prefill?.location || "")}" /></div>
     </div>
-    <div class="field"><label>Notes</label><textarea id="cls-notes" placeholder="Syllabus links, office hours, textbook info…"></textarea></div>
+    <div class="field"><label>Office hours (optional)</label><input type="text" id="cls-office" value="${escapeHtml(cls?.officeHours || "")}" placeholder="Tue/Thu lunch, room 214" /></div>
+    <div class="field">
+      <label>Links</label>
+      <div id="cls-link-rows">${linkRowsHTML()}</div>
+      <button type="button" class="btn ghost block mt-4" id="cls-link-add">+ Add link</button>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="cls-notes" placeholder="Textbook info, seating, anything to remember…"></textarea></div>
     <div class="sheet-actions">
       ${isEdit ? `<button class="btn danger" id="cls-delete">Delete</button>` : ""}
       <button class="btn ghost" id="cls-cancel">Cancel</button>
@@ -1008,6 +1581,31 @@ function openClassSheet(cls, { prefillPeriod } = {}) {
     {
       onMount: async (root) => {
         root.querySelector("#cls-cancel").addEventListener("click", closeSheet);
+
+        root.querySelector("#cls-colors").addEventListener("click", (e) => {
+          const btn = e.target.closest("[data-color]");
+          if (!btn) return;
+          chosenColor = btn.dataset.color;
+          root.querySelectorAll("#cls-colors button").forEach((b) => b.classList.toggle("sel", b === btn));
+        });
+
+        const linkRowsEl = root.querySelector("#cls-link-rows");
+        const refreshLinks = () => (linkRowsEl.innerHTML = linkRowsHTML());
+        root.querySelector("#cls-link-add").addEventListener("click", () => {
+          links.push({ label: "", url: "" });
+          refreshLinks();
+        });
+        linkRowsEl.addEventListener("input", (e) => {
+          const rowEl = e.target.closest("[data-link-idx]");
+          const f = e.target.dataset.linkField;
+          if (rowEl && f) links[Number(rowEl.dataset.linkIdx)][f] = e.target.value;
+        });
+        linkRowsEl.addEventListener("click", (e) => {
+          const btn = e.target.closest("[data-link-remove]");
+          if (!btn) return;
+          links.splice(Number(btn.dataset.linkRemove), 1);
+          refreshLinks();
+        });
 
         if (isEdit) {
           api.getNotes(cls.id).then(({ note }) => {
@@ -1021,6 +1619,7 @@ function openClassSheet(cls, { prefillPeriod } = {}) {
             const removed = state.classes[idx];
             state.classes.splice(idx, 1);
             closeSheet();
+            if (state.currentView === "class" && state.classDetailId === cls.id) location.hash = state.classReturnHash || "schedule";
             renderAll();
             scheduleDelete(
               cls.title,
@@ -1048,8 +1647,11 @@ function openClassSheet(cls, { prefillPeriod } = {}) {
             const payload = {
               title,
               period,
+              color: chosenColor,
               instructor: document.getElementById("cls-instructor").value.trim(),
               location: document.getElementById("cls-location").value.trim(),
+              officeHours: document.getElementById("cls-office").value.trim(),
+              links: links.map((l) => ({ label: l.label.trim(), url: l.url.trim() })).filter((l) => l.url),
             };
             let savedClass;
             if (isEdit) {
@@ -1080,24 +1682,259 @@ function openClassSheet(cls, { prefillPeriod } = {}) {
 }
 
 // ===========================================================
+// CLASS HOME PAGE (#class/<id>)
+// ===========================================================
+function wireClassDetailView() {
+  document.getElementById("class-back").addEventListener("click", () => {
+    location.hash = state.classReturnHash || "schedule";
+  });
+}
+
+function renderClassDetail() {
+  const host = document.getElementById("class-detail");
+  const c = classById(state.classDetailId);
+  if (!c) {
+    location.hash = "schedule";
+    return;
+  }
+  const meetings = meetingsForPeriod(c.period);
+  const now = new Date();
+  const meetsLine = meetings.length ? summarizeMeetings(meetings) : `Period ${escapeHtml(c.period)} — not on the bell schedule yet`;
+
+  const classAssignments = state.assignments
+    .filter((a) => a.classId === c.id)
+    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  const pending = classAssignments.filter((a) => a.status !== "done");
+  const doneList = classAssignments.filter((a) => a.status === "done").slice(-8).reverse();
+
+  const nextMeeting = nextMeetingLabel(meetings, now);
+
+  host.innerHTML = `
+    <div class="class-hero" style="--row-accent: ${accentVar(c.color)}">
+      <h2>${escapeHtml(c.title)}</h2>
+      <div class="meta">
+        <button data-edit-field="instructor">${c.instructor ? escapeHtml(c.instructor) : "+ teacher"}</button>
+        <button data-edit-field="location">${c.location ? escapeHtml("Room " + c.location) : "+ room"}</button>
+        <span>Period ${escapeHtml(c.period)}</span>
+      </div>
+      <div class="class-hero-actions">
+        <button class="btn ghost btn-xs" id="cd-edit">Edit</button>
+      </div>
+    </div>
+
+    <div class="section-title">Meets</div>
+    <div class="list-card"><div class="list-row block-row"><div class="row-body"><div class="row-title">${meetsLine}</div>
+      ${nextMeeting ? `<div class="row-sub">Next: ${nextMeeting}</div>` : ""}</div></div></div>
+
+    ${
+      c.officeHours
+        ? `<div class="section-title">Office hours</div><div class="list-card"><div class="list-row block-row"><div class="row-body"><div class="row-title">${escapeHtml(c.officeHours)}</div></div></div></div>`
+        : ""
+    }
+
+    ${
+      (c.links || []).length
+        ? `<div class="section-title">Links</div><div class="link-chips" id="cd-links">
+            ${c.links.map((l) => `<a class="link-chip" href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${LINK_SVG}${escapeHtml(l.label || l.url)}</a>`).join("")}
+          </div>`
+        : ""
+    }
+
+    <div class="section-title row-between"><span>Assignments</span>
+      <button class="btn ghost btn-xs" id="cd-add-asg">+ Add</button>
+    </div>
+    <div class="list-card" id="cd-pending">${
+      pending.length ? pending.map((a) => assignmentFlapRow(a)).join("") : emptyState("🎉", "Nothing pending", "No open assignments for this class.")
+    }</div>
+    ${doneList.length ? `<div class="section-title">Recently done</div><div class="list-card" id="cd-done">${doneList.map((a) => assignmentFlapRow(a)).join("")}</div>` : ""}
+
+    <div class="section-title">Notes</div>
+    <textarea class="notes-inline" id="cd-notes" placeholder="Textbook, seating, anything to remember…"></textarea>
+  `;
+
+  bindFlapRowClicks(host);
+
+  host.querySelector("#cd-edit").addEventListener("click", () => openClassSheet(c));
+  host.querySelector("#cd-add-asg").addEventListener("click", () => openAssignmentSheet(null, { prefill: { classId: c.id } }));
+
+  // inline teacher / room edit
+  host.querySelectorAll("[data-edit-field]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const field = btn.dataset.editField;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "row-inline-edit";
+      input.value = field === "location" ? c.location || "" : c.instructor || "";
+      input.placeholder = field === "location" ? "Room" : "Teacher";
+      btn.replaceWith(input);
+      input.focus();
+      input.addEventListener(
+        "blur",
+        guarded(async () => {
+          const val = input.value.trim();
+          const res = await api.updateClass(state.activeTermId, c.id, { [field]: val });
+          Object.assign(c, res.class);
+          const local = state.classes.find((x) => x.id === c.id);
+          if (local) Object.assign(local, res.class);
+          renderClassDetail();
+        })
+      );
+    });
+  });
+
+  // notes: load then autosave on blur
+  const notesEl = host.querySelector("#cd-notes");
+  api.getNotes(c.id).then(({ note }) => {
+    if (host.querySelector("#cd-notes")) host.querySelector("#cd-notes").value = note.content || "";
+  });
+  notesEl.addEventListener(
+    "blur",
+    guarded(async () => {
+      await api.saveNotes(c.id, notesEl.value);
+    })
+  );
+}
+
+/** "Mon–Fri 10:00–10:50 AM" when the time is uniform; otherwise per-day. */
+function summarizeMeetings(meetings) {
+  const sorted = [...meetings].sort((a, b) => DAY_ORDER.indexOf(a.dow) - DAY_ORDER.indexOf(b.dow));
+  const sameTime = sorted.every((m) => m.start === sorted[0].start && m.end === sorted[0].end);
+  const timeRange = (m) => `${timeStrToLabel(m.start)}–${timeStrToLabel(m.end)}`;
+  if (sameTime && sorted.length > 1) {
+    // collapse runs of consecutive weekdays
+    const idx = sorted.map((m) => DAY_ORDER.indexOf(m.dow));
+    const runs = [];
+    let runStart = 0;
+    for (let i = 1; i <= idx.length; i++) {
+      if (i === idx.length || idx[i] !== idx[i - 1] + 1) {
+        runs.push(runStart === i - 1 ? DAY_NAMES[sorted[runStart].dow].slice(0, 3) : `${DAY_NAMES[sorted[runStart].dow].slice(0, 3)}–${DAY_NAMES[sorted[i - 1].dow].slice(0, 3)}`);
+        runStart = i;
+      }
+    }
+    return `${runs.join(", ")} · ${timeRange(sorted[0])}`;
+  }
+  return sorted.map((m) => `${DAY_NAMES[m.dow].slice(0, 3)} ${timeRange(m)}`).join("  ·  ");
+}
+
+function nextMeetingLabel(meetings, now) {
+  if (!meetings.length) return "";
+  const todayIdx = now.getDay();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  for (let add = 0; add < 8; add++) {
+    const dow = (todayIdx + add) % 7;
+    const m = meetings.find((x) => x.dow === dow);
+    if (!m) continue;
+    if (add === 0 && timeStrToMinutes(m.start) <= nowMin) continue;
+    const dayLabel = add === 0 ? "today" : add === 1 ? "tomorrow" : DAY_NAMES[dow];
+    return `${dayLabel} at ${timeStrToLabel(m.start)}`;
+  }
+  return "";
+}
+
+// ===========================================================
+// Onboarding checklist (Today) — visible until setup is done
+// ===========================================================
+function renderOnboarding() {
+  const el = document.getElementById("onboarding-card");
+  if (!el) return;
+  const hasTerm = Boolean(state.activeTermId);
+  const hasBell = DAY_ORDER.some((d) => periodsForWeekday(d).length > 0);
+  const hasClasses = state.classes.length > 0;
+  if (hasTerm && hasBell && hasClasses) {
+    el.innerHTML = "";
+    return;
+  }
+  const step = (done, label, btn) =>
+    `<li class="${done ? "done" : ""}">${label}${!done && btn ? ` <button data-onboard="${btn.id}">${btn.text}</button>` : ""}</li>`;
+  el.innerHTML = `
+    <div class="onboard">
+      <h3>Let's get set up</h3>
+      <p>Three quick steps and the rest of the app comes to life.</p>
+      <ol>
+        ${step(hasTerm, "Add a term (e.g. “Fall 2026”)", { id: "term", text: "Add" })}
+        ${step(hasBell, "Set your bell schedule — which periods meet each day", { id: "bell", text: "Set up" })}
+        ${step(hasClasses, "Add your classes", { id: "class", text: "Add" })}
+      </ol>
+    </div>`;
+  el.querySelectorAll("[data-onboard]").forEach((b) => {
+    b.addEventListener("click", () => {
+      if (b.dataset.onboard === "term") openTermSheet(null);
+      else if (b.dataset.onboard === "bell") openDayScheduleOverviewSheet();
+      else openClassSheet(null);
+    });
+  });
+}
+
+// ===========================================================
 // ASSIGNMENTS view
 // ===========================================================
 function renderAssignments() {
   const pendingEl = document.getElementById("assignments-pending");
   const doneEl = document.getElementById("assignments-done");
+  const toolbarEl = document.getElementById("assign-toolbar");
   renderTodos(); // independent of term — always render regardless of what's below
 
   if (!state.activeTermId) {
+    toolbarEl.innerHTML = "";
     pendingEl.innerHTML = emptyState("📋", "No term yet", "Add a term in Settings to start tracking assignments.");
     doneEl.innerHTML = "";
     return;
   }
 
-  const pending = [...state.assignments].filter((a) => a.status !== "done").sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  const done = [...state.assignments].filter((a) => a.status === "done").sort((a, b) => b.completedAt - a.completedAt);
+  // --- filter toolbar: All / This week / Overdue / one chip per class ---
+  const filters = [
+    ["all", "All"],
+    ["week", "This week"],
+    ["overdue", "Overdue"],
+    ...state.classes.map((c) => [c.id, c.title]),
+  ];
+  if (!filters.some(([k]) => k === state.assignFilter)) state.assignFilter = "all";
+  toolbarEl.innerHTML =
+    filters.map(([k, label]) => `<button class="chip${k === state.assignFilter ? " active" : ""}" data-filter="${escapeHtml(k)}">${escapeHtml(label)}</button>`).join("") +
+    `<select class="chip" id="assign-sort" style="-webkit-appearance:none;appearance:none;">
+      ${[["due", "Sort: Due"], ["priority", "Sort: Priority"], ["class", "Sort: Class"]].map(([v, l]) => `<option value="${v}" ${state.settings.assignmentSort === v ? "selected" : ""}>${l}</option>`).join("")}
+    </select>`;
+  toolbarEl.querySelectorAll("[data-filter]").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.assignFilter = b.dataset.filter;
+      renderAssignments();
+    })
+  );
+  toolbarEl.querySelector("#assign-sort").addEventListener(
+    "change",
+    guarded(async (e) => {
+      const { settings } = await api.updateSettings({ assignmentSort: e.target.value });
+      state.settings = settings;
+      renderAssignments();
+    })
+  );
 
-  pendingEl.innerHTML = pending.length ? pending.map((a, i) => assignmentFlapRow(a, i)).join("") : emptyState("🎉", "All clear", "No pending assignments.");
-  doneEl.innerHTML = done.length ? done.slice(0, 20).map((a, i) => assignmentFlapRow(a, i)).join("") : emptyState("—", "Nothing completed yet", "");
+  const now = new Date();
+  const weekEnd = new Date(now.getTime() + 7 * 86400000);
+  const matchesFilter = (a) => {
+    if (state.assignFilter === "all") return true;
+    if (state.assignFilter === "week") return new Date(a.dueDate) <= weekEnd;
+    if (state.assignFilter === "overdue") return new Date(a.dueDate) < now;
+    return a.classId === state.assignFilter;
+  };
+  const prioRank = { high: 0, medium: 1, low: 2 };
+  const sortFn = (a, b) => {
+    if (state.settings.assignmentSort === "priority") return (prioRank[a.priority] ?? 1) - (prioRank[b.priority] ?? 1) || new Date(a.dueDate) - new Date(b.dueDate);
+    if (state.settings.assignmentSort === "class") {
+      const an = classById(a.classId)?.title || "~";
+      const bn = classById(b.classId)?.title || "~";
+      return an.localeCompare(bn) || new Date(a.dueDate) - new Date(b.dueDate);
+    }
+    return new Date(a.dueDate) - new Date(b.dueDate);
+  };
+
+  const pending = state.assignments.filter((a) => a.status !== "done" && matchesFilter(a)).sort(sortFn);
+  const done = state.assignments.filter((a) => a.status === "done").sort((a, b) => b.completedAt - a.completedAt);
+
+  pendingEl.innerHTML = pending.length
+    ? pending.map((a) => assignmentFlapRow(a)).join("")
+    : emptyState("🎉", state.assignFilter === "all" ? "All clear" : "Nothing here", state.assignFilter === "all" ? "No pending assignments." : "Try another filter.");
+  doneEl.innerHTML = done.length ? done.slice(0, 20).map((a) => assignmentFlapRow(a)).join("") : emptyState("—", "Nothing completed yet", "");
 
   bindFlapRowClicks(pendingEl, doneEl);
 }
@@ -1111,33 +1948,17 @@ function wireAssignmentsView() {
   wireTodoAdd();
 }
 
-// ---- Quick add (natural-language assignment entry) ----
+// ---- Quick add — same natural-language capture as the omnibox ----
 function wireQuickAdd() {
+  const input = document.getElementById("quick-add-input");
   const submit = guarded(async () => {
-    const input = document.getElementById("quick-add-input");
     const text = input.value.trim();
     if (!text) return;
-    if (!state.activeTermId) return toast("Add a term first.");
-
-    const parsed = parseNaturalDueDate(text, { now: new Date(), term: activeTerm() });
-    if (!parsed) {
-      // No date found in the text — open the full sheet with the title
-      // prefilled rather than silently failing or guessing a date.
-      input.value = "";
-      openAssignmentSheet(null, { prefillTitle: text });
-      return;
-    }
-
-    const title = text.replace(parsed.matchedText, "").replace(/^(due|is due|due on|due by)\b[:,-]?\s*/i, "").trim() || text;
-    await api.createAssignment(state.activeTermId, { title, dueDate: parsed.date.toISOString(), priority: "medium" });
     input.value = "";
-    await loadTermScopedData();
-    renderAll();
-    toast(`Added — due ${parsed.date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${parsed.date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`);
+    await runCapture(text);
   });
-
   document.getElementById("quick-add-submit").addEventListener("click", submit);
-  document.getElementById("quick-add-input").addEventListener("keydown", (e) => {
+  input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") submit();
   });
 }
@@ -1229,11 +2050,18 @@ function wireTodoAdd() {
   });
 }
 
-function openAssignmentSheet(assignment, { prefillTitle } = {}) {
+function openAssignmentSheet(assignment, { prefillTitle, prefill } = {}) {
   const isEdit = Boolean(assignment);
-  const dueLocal = assignment ? toDatetimeLocalValue(new Date(assignment.dueDate)) : defaultDueLocal();
+  const pf = prefill || {};
+  const pfDue = pf.dueDate ? (pf.dueDate instanceof Date ? pf.dueDate : new Date(pf.dueDate)) : null;
+  const initialTitle = assignment?.title || pf.title || prefillTitle || "";
+  const initialClassId = assignment?.classId || pf.classId || "";
+  const initialPriority = assignment?.priority || pf.priority || "medium";
+  const initialEffort = String(assignment?.estimatedMinutes || pf.estimatedMinutes || "");
+  const initialLink = assignment?.link || pf.link || "";
+  const dueLocal = assignment ? toDatetimeLocalValue(new Date(assignment.dueDate)) : pfDue ? toDatetimeLocalValue(pfDue) : defaultDueLocal();
   const term = activeTerm();
-  const defaultRepeatUntil = term ? term.endDate.slice(0, 10) : "";
+  const defaultRepeatUntil = (pf.repeat && pf.repeat.until ? new Date(pf.repeat.until).toISOString() : term ? term.endDate : "").slice(0, 10);
   const EFFORT_OPTIONS = [
     ["", "No estimate"],
     ["15", "15 min"],
@@ -1249,12 +2077,12 @@ function openAssignmentSheet(assignment, { prefillTitle } = {}) {
   openSheet(
     `
     <h2>${isEdit ? "Edit assignment" : "Add assignment"}</h2>
-    <div class="field"><label>Title</label><input type="text" id="asg-title" value="${escapeHtml(assignment?.title || prefillTitle || "")}" placeholder="Essay 2 draft" /></div>
+    <div class="field"><label>Title</label><input type="text" id="asg-title" value="${escapeHtml(initialTitle)}" placeholder="Essay 2 draft" /></div>
     <div class="field">
       <label>Class (optional)</label>
       <select id="asg-class">
         <option value="">No class</option>
-        ${state.classes.map((c) => `<option value="${c.id}" ${assignment?.classId === c.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`).join("")}
+        ${state.classes.map((c) => `<option value="${c.id}" ${initialClassId === c.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`).join("")}
       </select>
     </div>
     <div class="field"><label>Due</label><input type="datetime-local" id="asg-due" value="${dueLocal}" /></div>
@@ -1262,21 +2090,21 @@ function openAssignmentSheet(assignment, { prefillTitle } = {}) {
       <div class="field">
         <label>Priority</label>
         <select id="asg-priority">
-          <option value="low" ${assignment?.priority === "low" ? "selected" : ""}>Low</option>
-          <option value="medium" ${!assignment || assignment.priority === "medium" ? "selected" : ""}>Medium</option>
-          <option value="high" ${assignment?.priority === "high" ? "selected" : ""}>High</option>
+          <option value="low" ${initialPriority === "low" ? "selected" : ""}>Low</option>
+          <option value="medium" ${initialPriority === "medium" ? "selected" : ""}>Medium</option>
+          <option value="high" ${initialPriority === "high" ? "selected" : ""}>High</option>
         </select>
       </div>
       <div class="field">
         <label>Est. time</label>
         <select id="asg-effort">
-          ${EFFORT_OPTIONS.map(([v, l]) => `<option value="${v}" ${String(assignment?.estimatedMinutes || "") === v ? "selected" : ""}>${l}</option>`).join("")}
+          ${EFFORT_OPTIONS.map(([v, l]) => `<option value="${v}" ${initialEffort === v ? "selected" : ""}>${l}</option>`).join("")}
         </select>
       </div>
     </div>
     <div class="field">
       <label>Link (optional)</label>
-      <input type="text" id="asg-link" value="${escapeHtml(assignment?.link || "")}" placeholder="Canvas, Google Doc, etc." />
+      <input type="text" id="asg-link" value="${escapeHtml(initialLink)}" placeholder="Canvas, Google Doc, etc." />
     </div>
     <div class="field"><label>Notes</label><textarea id="asg-notes">${escapeHtml(assignment?.notes || "")}</textarea></div>
     ${
@@ -1284,9 +2112,9 @@ function openAssignmentSheet(assignment, { prefillTitle } = {}) {
         ? `<div class="field">
           <div class="settings-row" style="padding:0 0 10px; background:none;">
             <div class="label">Repeat weekly</div>
-            <label class="switch"><input type="checkbox" id="asg-repeat" /><span class="track"></span></label>
+            <label class="switch"><input type="checkbox" id="asg-repeat" ${pf.repeat ? "checked" : ""} /><span class="track"></span></label>
           </div>
-          <div id="asg-repeat-until-wrap" class="hidden">
+          <div id="asg-repeat-until-wrap" class="${pf.repeat ? "" : "hidden"}">
             <label>Repeat until</label>
             <input type="date" id="asg-repeat-until" value="${defaultRepeatUntil}" />
           </div>
@@ -1620,14 +2448,14 @@ function renderCalendarDayList() {
   const el = document.getElementById("cal-day-list");
   const d = state.calSelected;
   const dow = d.getDay();
-  const classesThatDay = scheduleForWeekday(dow).filter((s) => s.cls);
+  const slotsThatDay = scheduleForWeekday(dow);
   const assignmentsThatDay = state.assignments.filter((a) => isSameDay(new Date(a.dueDate), d));
 
-  if (classesThatDay.length === 0 && assignmentsThatDay.length === 0) {
+  if (slotsThatDay.length === 0 && assignmentsThatDay.length === 0) {
     el.innerHTML = emptyState("—", d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }), "Nothing scheduled.");
     return;
   }
-  el.innerHTML = classesThatDay.map((s) => classFlapRow(s)).join("") + assignmentsThatDay.map((a) => assignmentFlapRow(a)).join("");
+  el.innerHTML = slotsThatDay.map((s) => slotRow(s)).join("") + assignmentsThatDay.map((a) => assignmentFlapRow(a)).join("");
   bindFlapRowClicks(el);
 }
 
@@ -1801,6 +2629,11 @@ function renderSettings() {
 
   document.getElementById("reminder-offsets").value = (state.settings.reminderOffsetsMinutes || []).join(", ");
   document.getElementById("theme-select").value = state.settings.theme || "system";
+  document.getElementById("passing-value").textContent = state.settings.passingPeriodMaxMinutes ?? 15;
+  document.getElementById("nlassist-sub").textContent = state.settings.nlAssist
+    ? `On — ${state.settings.nlAssist.url}`
+    : "Optional. An endpoint that helps parse anything the built-in reader can't.";
+  document.getElementById("btn-nlassist").textContent = state.settings.nlAssist ? "Change" : "Set up";
   document.getElementById("settings-points").textContent = state.points.total;
   document.getElementById("settings-streak").textContent = state.points.streak;
   document.getElementById("settings-level").textContent = state.points.level.name;
@@ -1832,6 +2665,27 @@ function wireSettingsView() {
       applyTheme();
     })
   );
+
+  document.getElementById("passing-stepper").addEventListener(
+    "click",
+    guarded(async (e) => {
+      const btn = e.target.closest("[data-passing-delta]");
+      if (!btn) return;
+      const cur = Number(state.settings.passingPeriodMaxMinutes ?? 15);
+      const next = Math.max(1, Math.min(60, cur + Number(btn.dataset.passingDelta)));
+      if (next === cur) return;
+      const { settings } = await api.updateSettings({ passingPeriodMaxMinutes: next });
+      state.settings = settings;
+      renderAll();
+    })
+  );
+
+  document.getElementById("btn-export-ics").addEventListener("click", () => {
+    if (!state.activeTermId) return toast("Add a term first.");
+    exportICS();
+  });
+
+  document.getElementById("btn-nlassist").addEventListener("click", openNlAssistSheet);
 
   document.getElementById("push-toggle-btn").addEventListener("click", async () => {
     const status = await currentPushStatus();
@@ -1894,6 +2748,123 @@ async function refreshPushStatusUI() {
     btn.disabled = status === "denied" || status === "unsupported";
   } catch {
     sub.textContent = "Couldn't check notification status.";
+  }
+}
+
+// ---- Natural-language assist endpoint ----
+function openNlAssistSheet() {
+  const cur = state.settings.nlAssist || {};
+  openSheet(
+    `
+    <h2>Natural-language assist</h2>
+    <p class="small text-muted" style="margin:-8px 0 14px;">Optional. When the built-in reader isn't sure what you typed, it can POST the text to an endpoint you control and use the structured result. Nothing is sent unless you set this. Leave blank and save to turn it off.</p>
+    <div class="field"><label>Endpoint URL (https)</label><input type="text" id="nla-url" value="${escapeHtml(cur.url || "")}" placeholder="https://example.com/parse" /></div>
+    <div class="field"><label>API key (optional)</label><input type="password" id="nla-key" value="${escapeHtml(cur.key || "")}" placeholder="sent as a Bearer token" /></div>
+    <div class="sheet-actions">
+      <button class="btn ghost" id="nla-cancel">Cancel</button>
+      <button class="btn primary block" id="nla-save">Save</button>
+    </div>
+  `,
+    {
+      onMount: (root) => {
+        root.querySelector("#nla-cancel").addEventListener("click", closeSheet);
+        root.querySelector("#nla-save").addEventListener(
+          "click",
+          guarded(async () => {
+            const url = root.querySelector("#nla-url").value.trim();
+            const key = root.querySelector("#nla-key").value.trim();
+            const nlAssist = url ? { url, ...(key ? { key } : {}) } : null;
+            const { settings } = await api.updateSettings({ nlAssist });
+            state.settings = settings;
+            closeSheet();
+            renderSettings();
+            toast(nlAssist ? "Assist endpoint saved." : "Assist turned off.");
+          })
+        );
+      },
+    }
+  );
+}
+
+// ---- .ics calendar export ----
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+function icsStamp(d) {
+  return `${d.getUTCFullYear()}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}T${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}00Z`;
+}
+function icsEscape(s) {
+  return String(s || "").replace(/([,;\\])/g, "\\$1").replace(/\n/g, "\\n");
+}
+
+/** Build an .ics string: one event per assignment due date, plus a weekly recurring event per class meeting. */
+function buildICS() {
+  const term = activeTerm();
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//School//EN", "CALSCALE:GREGORIAN"];
+  const now = new Date();
+
+  for (const a of state.assignments) {
+    const due = new Date(a.dueDate);
+    if (Number.isNaN(due.getTime())) continue;
+    const cls = classById(a.classId);
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:asg-${a.id}@school`,
+      `DTSTAMP:${icsStamp(now)}`,
+      `DTSTART:${icsStamp(due)}`,
+      `DTEND:${icsStamp(new Date(due.getTime() + 30 * 60000))}`,
+      `SUMMARY:${icsEscape((cls ? cls.title + ": " : "") + a.title)}${a.status === "done" ? " (done)" : ""}`,
+      a.notes ? `DESCRIPTION:${icsEscape(a.notes)}` : "DESCRIPTION:",
+      "END:VEVENT"
+    );
+  }
+
+  if (term) {
+    const termEnd = new Date(term.endDate);
+    const until = icsStamp(termEnd);
+    for (const c of state.classes) {
+      for (const m of meetingsForPeriod(c.period)) {
+        // first occurrence: next date matching this weekday on/after term start
+        const start = new Date(term.startDate);
+        while (start.getDay() !== m.dow) start.setDate(start.getDate() + 1);
+        const [sh, sm] = m.start.split(":").map(Number);
+        const [eh, em] = m.end.split(":").map(Number);
+        const dtStart = new Date(start.getFullYear(), start.getMonth(), start.getDate(), sh, sm);
+        const dtEnd = new Date(start.getFullYear(), start.getMonth(), start.getDate(), eh, em);
+        const BYDAY = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][m.dow];
+        lines.push(
+          "BEGIN:VEVENT",
+          `UID:cls-${c.id}-${m.dow}@school`,
+          `DTSTAMP:${icsStamp(now)}`,
+          `DTSTART:${icsStamp(dtStart)}`,
+          `DTEND:${icsStamp(dtEnd)}`,
+          `RRULE:FREQ=WEEKLY;BYDAY=${BYDAY};UNTIL=${until}`,
+          `SUMMARY:${icsEscape(c.title)}`,
+          `LOCATION:${icsEscape(c.location || "")}`,
+          "END:VEVENT"
+        );
+      }
+    }
+  }
+
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
+function exportICS() {
+  try {
+    const blob = new Blob([buildICS()], { type: "text/calendar" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(activeTerm()?.name || "school").replace(/[^\w-]+/g, "-").toLowerCase()}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Calendar file exported.");
+  } catch (e) {
+    toast(e?.message || "Couldn't build the calendar file.", { ms: 4500 });
   }
 }
 
@@ -2060,7 +3031,7 @@ async function runSearch(query) {
     resultsEl.querySelectorAll("[data-class-id]").forEach((row) => {
       row.addEventListener("click", () => {
         closeSheet();
-        openClassSheet(classById(row.dataset.classId));
+        goToClass(row.dataset.classId);
       });
     });
     resultsEl.querySelectorAll("[data-assignment-id]").forEach((row) => {

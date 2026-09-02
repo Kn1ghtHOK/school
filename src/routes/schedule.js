@@ -1,6 +1,6 @@
 import { json, err, readJSON } from "../lib/http.js";
 import { getJSON, putJSON, newId, keys } from "../lib/store.js";
-import { clampText, MAX_TITLE_LEN } from "../lib/validate.js";
+import { clampText, MAX_TITLE_LEN, normalizeClassColor, normalizeLinks } from "../lib/validate.js";
 
 // A "class" is tied to a period label (e.g. "3", "WIN") rather than to
 // specific weekdays/times directly. Which days it actually meets, and at
@@ -8,6 +8,7 @@ import { clampText, MAX_TITLE_LEN } from "../lib/validate.js";
 // — whichever weekdays include that period.
 
 const MAX_PERIOD_LEN = 20;
+const MAX_OFFICE_HOURS_LEN = 500;
 
 export async function list(request, env, termId) {
   const classes = await getJSON(env.SCHOOL_KV, keys.schedule(termId), []);
@@ -22,12 +23,22 @@ export async function create(request, env, termId) {
   if (!period) return err("period is required.", 400);
 
   const classes = await getJSON(env.SCHOOL_KV, keys.schedule(termId), []);
+
+  const color = normalizeClassColor(body.color, classes.map((c) => c.color).filter(Boolean));
+  if (color === false) return err("color must be one of class-1 … class-10.", 400);
+
+  const links = normalizeLinks(body.links);
+  if (links === false) return err("links must be a list of { label, url } with valid URLs.", 400);
+
   const cls = {
     id: newId(),
     title,
     period,
+    color,
     instructor: clampText(body.instructor, MAX_TITLE_LEN),
     location: clampText(body.location, MAX_TITLE_LEN),
+    officeHours: clampText(body.officeHours, MAX_OFFICE_HOURS_LEN),
+    links: links || [],
     createdAt: Date.now(),
   };
   classes.push(cls);
@@ -52,6 +63,17 @@ export async function update(request, env, termId, classId) {
   }
   if (editable.instructor !== undefined) editable.instructor = clampText(editable.instructor, MAX_TITLE_LEN);
   if (editable.location !== undefined) editable.location = clampText(editable.location, MAX_TITLE_LEN);
+  if (editable.officeHours !== undefined) editable.officeHours = clampText(editable.officeHours, MAX_OFFICE_HOURS_LEN);
+  if (editable.color !== undefined) {
+    const color = normalizeClassColor(editable.color, []);
+    if (color === false) return err("color must be one of class-1 … class-10.", 400);
+    editable.color = color;
+  }
+  if (editable.links !== undefined) {
+    const links = normalizeLinks(editable.links);
+    if (links === false) return err("links must be a list of { label, url } with valid URLs.", 400);
+    editable.links = links;
+  }
 
   classes[idx] = { ...classes[idx], ...editable, id: classId };
   await putJSON(env.SCHOOL_KV, keys.schedule(termId), classes);

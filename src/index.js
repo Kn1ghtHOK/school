@@ -4,6 +4,7 @@ import * as authRoutes from "./routes/auth.js";
 import * as terms from "./routes/terms.js";
 import * as schedule from "./routes/schedule.js";
 import * as dayschedule from "./routes/dayschedule.js";
+import * as periodtimes from "./routes/periodtimes.js";
 import * as assignments from "./routes/assignments.js";
 import * as notes from "./routes/notes.js";
 import * as push from "./routes/push.js";
@@ -34,6 +35,9 @@ const ROUTES = [
 
   ["GET", "/api/terms/:termId/dayschedule", dayschedule.get],
   ["PUT", "/api/terms/:termId/dayschedule/:weekday", dayschedule.setDay],
+
+  ["GET", "/api/terms/:termId/periodtimes", periodtimes.get],
+  ["PUT", "/api/terms/:termId/periodtimes", periodtimes.put],
 
   ["GET", "/api/terms/:termId/assignments", assignments.list],
   ["POST", "/api/terms/:termId/assignments", assignments.create],

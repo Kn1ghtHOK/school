@@ -91,8 +91,8 @@ await new Promise((r) => setTimeout(r, 50));
 document.getElementById('add-period').click();
 await new Promise((r) => setTimeout(r, 50));
 let periodRow = document.querySelector('#period-rows [data-idx="0"]');
-periodRow.querySelector('[data-field="period"]').value = '3';
-periodRow.querySelector('[data-field="period"]').dispatchEvent(new window.Event('input', { bubbles: true }));
+periodRow.querySelector('[data-field="name"]').value = '3';
+periodRow.querySelector('[data-field="name"]').dispatchEvent(new window.Event('input', { bubbles: true }));
 periodRow.querySelector('[data-field="start"]').value = '10:25';
 periodRow.querySelector('[data-field="start"]').dispatchEvent(new window.Event('input', { bubbles: true }));
 periodRow.querySelector('[data-field="end"]').value = '11:15';
@@ -100,19 +100,32 @@ periodRow.querySelector('[data-field="end"]').dispatchEvent(new window.Event('in
 document.getElementById('day-save').click();
 await new Promise((r) => setTimeout(r, 300));
 assert(errors.length === 0, `no runtime errors saving Tuesday bell schedule (got: ${JSON.stringify(errors)})`);
-assert(document.querySelector('[data-edit-day="2"] .sub').textContent.includes('1 period'), 'Tuesday shows 1 period after save');
+assert(document.querySelector('[data-edit-day="2"] .sub').textContent.includes('1 class'), 'Tuesday shows 1 class after save');
 document.getElementById('dayschedule-done').click();
 await new Promise((r) => setTimeout(r, 50));
 
-// ---- Add a class on period 3 ----
+// ---- Add a WIN block to every school day ----
+document.getElementById('btn-edit-dayschedule').click();
+await new Promise((r) => setTimeout(r, 50));
+document.getElementById('add-everyday-block').click();
+await new Promise((r) => setTimeout(r, 50));
+document.getElementById('eb-kind').value = 'win';
+document.getElementById('eb-start').value = '08:00';
+document.getElementById('eb-end').value = '08:10';
+document.getElementById('eb-save').click();
+await new Promise((r) => setTimeout(r, 300));
+assert(errors.length === 0, `no runtime errors adding an every-day block (got: ${JSON.stringify(errors)})`);
+document.getElementById('dayschedule-done').click();
+await new Promise((r) => setTimeout(r, 50));
+
+// ---- Add a class via the omnibox (natural language) ----
 document.getElementById('topbar-add').click();
 await new Promise((r) => setTimeout(r, 50));
-document.getElementById('cls-title').value = 'CS 201';
-document.getElementById('cls-period').value = '3';
-document.getElementById('cls-save').click();
+document.getElementById('omni-input').value = 'CS 201 period 3';
+document.getElementById('omni-go').click();
 await new Promise((r) => setTimeout(r, 300));
 
-assert(errors.length === 0, `no runtime errors after adding class (got: ${JSON.stringify(errors)})`);
+assert(errors.length === 0, `no runtime errors after adding class via omnibox (got: ${JSON.stringify(errors)})`);
 assert(document.getElementById('schedule-week').textContent.includes('CS 201'), 'class appears in schedule view');
 
 // ---- Add an assignment ----
@@ -120,7 +133,11 @@ document.querySelectorAll('.tabbar button')[2].click(); // assignments tab
 await new Promise((r) => setTimeout(r, 50));
 document.getElementById('topbar-add').click();
 await new Promise((r) => setTimeout(r, 50));
-document.getElementById('asg-title').value = 'Essay 1';
+document.getElementById('omni-input').value = 'Essay 1';
+document.getElementById('omni-go').click();
+await new Promise((r) => setTimeout(r, 200));
+// no date -> falls through to the full sheet, pre-filled
+assert(document.getElementById('asg-title')?.value === 'Essay 1', 'dateless omnibox entry opens the assignment sheet pre-filled');
 document.getElementById('asg-save').click();
 await new Promise((r) => setTimeout(r, 300));
 
@@ -145,13 +162,24 @@ await new Promise((r) => setTimeout(r, 200));
 assert(errors.length === 0, `no runtime errors snoozing an assignment (got: ${JSON.stringify(errors)})`);
 assert(document.getElementById('sheet-root').innerHTML === '', 'sheet closes after snoozing');
 
-// Quick add with no parseable date should open the full sheet instead of failing silently.
-document.getElementById('quick-add-input').value = 'Bring calculator to class';
+// A dateless, non-assignment-shaped entry with no clear title opens the full sheet.
+document.getElementById('quick-add-input').value = 'Finish the history poster';
 document.getElementById('quick-add-submit').click();
 await new Promise((r) => setTimeout(r, 100));
 assert(errors.length === 0, `no runtime errors when quick-add has no date (got: ${JSON.stringify(errors)})`);
-assert(document.getElementById('asg-title')?.value === 'Bring calculator to class', 'quick-add falls back to the full sheet with the title prefilled');
+assert(document.getElementById('asg-title')?.value === 'Finish the history poster', 'a dateless entry falls back to the full sheet with the title prefilled');
 document.getElementById('asg-cancel').click();
+
+// A to-do-shaped phrase becomes a to-do directly from quick-add.
+document.getElementById('quick-add-input').value = 'bring a calculator';
+document.getElementById('quick-add-submit').click();
+await new Promise((r) => setTimeout(r, 200));
+assert(errors.length === 0, `no runtime errors on a to-do-shaped quick-add (got: ${JSON.stringify(errors)})`);
+const calcTodo = [...document.querySelectorAll('[data-todo-title]')].find((i) => i.value === 'bring a calculator');
+assert(!!calcTodo, 'a "bring …" phrase is captured as a to-do');
+// clean it back up so the dedicated to-do tests below start from an empty list
+calcTodo.closest('[data-todo-id]').querySelector('[data-remove-todo]').click();
+await new Promise((r) => setTimeout(r, 100));
 
 // ---- To-dos ----
 document.getElementById('todo-add-input').value = 'Add a new pen to my bag';
@@ -202,9 +230,15 @@ await new Promise((r) => setTimeout(r, 400)); // debounce + fetch
 assert(errors.length === 0, `no runtime errors searching (got: ${JSON.stringify(errors)})`);
 assert(document.getElementById('search-results').textContent.includes('CS 201'), 'search finds the class by name');
 document.querySelector('#search-results [data-class-id]').click();
-await new Promise((r) => setTimeout(r, 100));
-assert(document.getElementById('cls-title')?.value === 'CS 201', 'clicking a search result opens its edit sheet');
+await new Promise((r) => setTimeout(r, 120));
+assert(document.getElementById('view-class').classList.contains('active'), 'clicking a search result opens the class home page');
+assert(document.getElementById('class-detail').textContent.includes('CS 201'), 'class home page shows the class name');
+document.getElementById('cd-edit').click();
+await new Promise((r) => setTimeout(r, 80));
+assert(document.getElementById('cls-title')?.value === 'CS 201', 'Edit on the class page opens the edit sheet');
 document.getElementById('cls-cancel').click();
+location.hash = 'today';
+await new Promise((r) => setTimeout(r, 60));
 
 // ---- Archive / unarchive a term ----
 location.hash = 'settings';
@@ -257,26 +291,32 @@ document.getElementById('sheet-backdrop').click();
 await new Promise((r) => setTimeout(r, 50));
 assert(document.getElementById('sheet-root').innerHTML === '', 'sheet closes on backdrop click');
 
-// ---- Re-open the class to confirm notes persisted ----
+// ---- Class home page: inline notes persist ----
 location.hash = 'schedule';
 await new Promise((r) => setTimeout(r, 100));
-document.querySelector('[data-class-id]').click();
-await new Promise((r) => setTimeout(r, 100));
-assert(document.getElementById('cls-title').value === 'CS 201', 'editing existing class prefills title');
-document.getElementById('cls-notes').value = 'Bring calculator';
-document.getElementById('cls-save').click();
-await new Promise((r) => setTimeout(r, 300));
-document.querySelector('[data-class-id]').click();
+document.querySelector('#schedule-week [data-class-id]').click();
 await new Promise((r) => setTimeout(r, 150));
-assert(document.getElementById('cls-notes').value === 'Bring calculator', 'class notes persisted across edits');
-document.getElementById('cls-cancel').click();
+assert(document.getElementById('view-class').classList.contains('active'), 'tapping a class row opens the class home page');
+assert(document.getElementById('class-detail').textContent.includes('CS 201'), 'class home page shows the class name');
+const cdNotes = document.getElementById('cd-notes');
+cdNotes.value = 'Bring calculator';
+cdNotes.dispatchEvent(new window.Event('blur', { bubbles: true }));
+await new Promise((r) => setTimeout(r, 250));
+location.hash = 'today';
+await new Promise((r) => setTimeout(r, 60));
+location.hash = 'schedule';
+await new Promise((r) => setTimeout(r, 80));
+document.querySelector('#schedule-week [data-class-id]').click();
+await new Promise((r) => setTimeout(r, 200));
+assert(document.getElementById('cd-notes').value === 'Bring calculator', 'class notes persisted (inline on the class page)');
 
 // ---- Delete-with-undo: class disappears immediately, Undo brings it back ----
-document.querySelector('[data-class-id]').click();
-await new Promise((r) => setTimeout(r, 100));
+document.getElementById('cd-edit').click();
+await new Promise((r) => setTimeout(r, 80));
 document.getElementById('cls-delete').click();
 await new Promise((r) => setTimeout(r, 100));
 assert(errors.length === 0, `no runtime errors after optimistic class delete (got: ${JSON.stringify(errors)})`);
+assert(document.getElementById('view-schedule').classList.contains('active'), 'deleting from the class page returns to the schedule');
 assert(!document.getElementById('schedule-week').textContent.includes('CS 201'), 'class removed from schedule immediately after delete');
 // Pick the toast that actually belongs to this delete — other undo toasts
 // (e.g. from the earlier todo deletion) may still be on screen too.

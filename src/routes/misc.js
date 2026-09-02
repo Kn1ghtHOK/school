@@ -3,6 +3,7 @@ import { getJSON, putJSON, keys, DEFAULT_SETTINGS } from "../lib/store.js";
 import { summarizeHistory } from "../lib/points.js";
 
 const THEMES = ["system", "dark", "light"];
+const ASSIGNMENT_SORTS = ["due", "priority", "class"];
 const MAX_REMINDER_OFFSETS = 10;
 
 export async function pointsSummary(request, env) {
@@ -39,6 +40,30 @@ export async function putSettings(request, env) {
 
   if (body.theme !== undefined && !THEMES.includes(body.theme)) {
     return err(`theme must be one of: ${THEMES.join(", ")}.`, 400);
+  }
+
+  if (body.passingPeriodMaxMinutes !== undefined) {
+    const n = Number(body.passingPeriodMaxMinutes);
+    if (!Number.isInteger(n) || n < 1 || n > 60) {
+      return err("passingPeriodMaxMinutes must be an integer from 1 to 60.", 400);
+    }
+    next.passingPeriodMaxMinutes = n;
+  }
+
+  if (body.assignmentSort !== undefined && !ASSIGNMENT_SORTS.includes(body.assignmentSort)) {
+    return err(`assignmentSort must be one of: ${ASSIGNMENT_SORTS.join(", ")}.`, 400);
+  }
+
+  if (body.nlAssist !== undefined) {
+    if (body.nlAssist !== null) {
+      const a = body.nlAssist;
+      if (typeof a !== "object" || typeof a.url !== "string" || !/^https:\/\//i.test(a.url)) {
+        return err("nlAssist must be null or { url: \"https://…\", key?: \"…\" }.", 400);
+      }
+      next.nlAssist = { url: a.url, ...(a.key ? { key: String(a.key) } : {}) };
+    } else {
+      next.nlAssist = null;
+    }
   }
 
   await putJSON(env.SCHOOL_KV, keys.settings(), next);

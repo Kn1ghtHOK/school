@@ -28,6 +28,20 @@
   --heat-2: rgba(255, 255, 255, 0.24);
   --heat-3: rgba(255, 255, 255, 0.42);
 
+  /* Per-class palette — the one place color is allowed in beyond red/green.
+     Classes store a token name ("class-3"); the CSS maps it to a line/dot
+     color and a translucent band. Tuned to read on both black and white. */
+  --class-1: #3b82f6;
+  --class-2: #a855f7;
+  --class-3: #ec4899;
+  --class-4: #f59e0b;
+  --class-5: #14b8a6;
+  --class-6: #6366f1;
+  --class-7: #f43f5e;
+  --class-8: #65a30d;
+  --class-9: #06b6d4;
+  --class-10: #fb923c;
+
   --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 -1px 0 rgba(0, 0, 0, 0.35);
   --shadow: 0 10px 26px -12px rgba(0, 0, 0, 0.55);
   --blur: saturate(180%) blur(20px);
@@ -64,6 +78,18 @@
   --heat-1: rgba(0, 0, 0, 0.06);
   --heat-2: rgba(0, 0, 0, 0.13);
   --heat-3: rgba(0, 0, 0, 0.26);
+
+  /* Slightly deeper on white so a thin bar/dot still reads. */
+  --class-1: #2563eb;
+  --class-2: #9333ea;
+  --class-3: #db2777;
+  --class-4: #d97706;
+  --class-5: #0d9488;
+  --class-6: #4f46e5;
+  --class-7: #e11d48;
+  --class-8: #4d7c0f;
+  --class-9: #0891b2;
+  --class-10: #ea580c;
 
   --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 -1px 0 rgba(0, 0, 0, 0.04);
   --shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.25);
@@ -298,16 +324,28 @@ main { padding: 4px 16px 24px; }
 }
 
 .list-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
   border-bottom: 0.5px solid var(--separator);
   cursor: pointer;
+  transition: background 0.12s;
 }
 .list-row:last-child { border-bottom: none; }
+.list-row:active { background: var(--surface-2); }
+/* Per-class accent bar — JS sets --row-accent on rows tied to a class. */
+.list-row[style*="--row-accent"]::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--row-accent);
+}
 .free-period-row { cursor: pointer; }
 .free-period-row .row-time { color: var(--text-tertiary); }
+.free-period-row:active { background: transparent; }
 
 .row-time {
   font-family: var(--font-rounded);
@@ -442,6 +480,7 @@ main { padding: 4px 16px 24px; }
 .period-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 8px;
 }
@@ -456,6 +495,16 @@ main { padding: 4px 16px 24px; }
   color: var(--text);
   text-align: center;
 }
+.period-row .period-kind {
+  flex: 1 1 100%;
+  background: var(--surface-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 9px 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.period-row .row-inline-edit { flex: 1 1 40%; }
 .period-row input[type="time"] {
   flex: 1;
   min-width: 0;
@@ -718,3 +767,243 @@ main { padding: 4px 16px 24px; }
 }
 .switch input:checked + .track { background: var(--success); }
 .switch input:checked + .track::before { transform: translateX(18px); }
+
+/* ===========================================================
+   v3 additions — color system, class home page, now/next,
+   named blocks, omnibox, agenda, small controls, polish
+=========================================================== */
+
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+
+.row-between { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.title-actions { display: flex; gap: 6px; }
+.btn-xs { padding: 6px 10px; font-size: 12px; border-radius: 999px; }
+.inline-select {
+  background: var(--surface-2);
+  border: 1px solid var(--separator);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.heatmap-card { padding: 12px; }
+
+/* --- segmented control --- */
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 999px; padding: 2px; box-shadow: var(--bevel); }
+.seg-btn {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.seg-btn.active { background: var(--accent); color: var(--accent-text); }
+
+/* --- stepper --- */
+.stepper { display: flex; align-items: center; gap: 8px; }
+.stepper-btn {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--bevel);
+}
+.stepper #passing-value, .stepper span:not(.stepper-unit) { font-size: 15px; min-width: 20px; text-align: center; }
+.stepper-unit { font-size: 12px; color: var(--text-secondary); }
+
+/* --- back link (detail views) --- */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 4px 0;
+  margin: 2px 0 10px;
+  cursor: pointer;
+}
+.back-link svg { width: 15px; height: 15px; }
+
+/* --- now / next strip on Today --- */
+.now-next { margin: 14px 0 4px; }
+.now-next:empty { display: none; }
+.now-card {
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-radius: var(--radius);
+  box-shadow: var(--bevel), var(--shadow);
+  padding: 14px 16px;
+  position: relative;
+  overflow: hidden;
+}
+.now-card + .now-card { margin-top: 8px; }
+.now-card .kicker {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.now-card .now-title { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; margin-top: 3px; }
+.now-card .now-sub { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+.now-card .now-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--row-accent, var(--text-tertiary)); }
+.now-progress { height: 4px; border-radius: 999px; background: var(--surface-2); margin-top: 10px; overflow: hidden; }
+.now-progress > i { display: block; height: 100%; background: var(--row-accent, var(--accent)); border-radius: 999px; }
+.now-card.passing .now-title, .now-card.gap .now-title { font-size: 15px; color: var(--text-secondary); }
+.now-card.done .now-title { font-size: 15px; }
+
+/* --- non-class blocks (lunch / WIN / advisory) in a schedule list --- */
+.block-row { cursor: default; }
+.block-row:active { background: transparent; }
+.block-row .row-title { color: var(--text-secondary); font-weight: 590; }
+.block-row .block-glyph {
+  width: 28px; text-align: center; font-size: 15px; flex-shrink: 0;
+}
+.passing-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px 5px 44px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  border-bottom: 0.5px solid var(--separator);
+}
+.passing-strip::before {
+  content: "";
+  width: 14px;
+  border-top: 1.5px dotted var(--text-tertiary);
+}
+
+/* --- assignment filter toolbar --- */
+.assign-toolbar { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+.assign-toolbar::-webkit-scrollbar { display: none; }
+.chip {
+  flex-shrink: 0;
+  border: none;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: var(--bevel);
+}
+.chip.active { background: var(--accent); color: var(--accent-text); box-shadow: none; }
+
+/* --- class home page --- */
+.class-hero {
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--row-accent) 22%, transparent),
+      color-mix(in srgb, var(--row-accent) 6%, transparent));
+  box-shadow: var(--bevel);
+  margin-bottom: 8px;
+}
+.class-hero h2 { margin: 0; font-size: 22px; font-weight: 750; letter-spacing: -0.02em; }
+.class-hero .meta { margin-top: 6px; font-size: 13px; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.class-hero .meta button {
+  background: none; border: none; color: var(--text); font: inherit;
+  border-bottom: 1px dashed var(--text-tertiary); cursor: pointer; padding: 0;
+}
+.class-hero-actions { margin-top: 12px; display: flex; gap: 8px; }
+.class-color-dots { display: flex; flex-wrap: wrap; gap: 8px; }
+.class-color-dots button {
+  width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer;
+}
+.class-color-dots button.sel { border-color: var(--text); }
+.link-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.link-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface-2); color: var(--text);
+  border: none; border-radius: 999px; padding: 8px 13px;
+  font-size: 12.5px; font-weight: 600; cursor: pointer; text-decoration: none;
+  box-shadow: var(--bevel);
+}
+.link-chip svg { width: 12px; height: 12px; color: var(--text-tertiary); }
+.notes-inline {
+  width: 100%;
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: var(--bevel), var(--shadow);
+  padding: 14px;
+  font-size: 14px;
+  color: var(--text);
+  min-height: 90px;
+  resize: vertical;
+  font-family: var(--font-body);
+}
+
+/* --- omnibox sheet --- */
+.omni-input {
+  width: 100%;
+  background: var(--surface-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 13px 14px;
+  font-size: 16px;
+  color: var(--text);
+}
+.omni-preview {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  min-height: 32px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+.omni-preview strong { color: var(--text); font-weight: 650; }
+.omni-hints { margin-top: 12px; font-size: 11.5px; color: var(--text-tertiary); line-height: 1.5; }
+
+/* --- onboarding checklist card --- */
+.onboard {
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-radius: var(--radius);
+  box-shadow: var(--bevel), var(--shadow);
+  padding: 16px;
+  margin: 14px 0 4px;
+}
+.onboard h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+.onboard p { margin: 0 0 12px; font-size: 12.5px; color: var(--text-secondary); }
+.onboard ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.onboard li { font-size: 13.5px; }
+.onboard li.done { color: var(--text-tertiary); text-decoration: line-through; }
+.onboard li button {
+  margin-left: 8px;
+  border: none; background: var(--accent); color: var(--accent-text);
+  font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+}
+
+/* --- agenda (this-week) view --- */
+.agenda-day { margin-bottom: 4px; }
+.agenda-day .agenda-head {
+  font-size: 12.5px; font-weight: 700; color: var(--text-secondary);
+  margin: 18px 4px 8px; display: flex; justify-content: space-between;
+}
+.agenda-day .agenda-head.is-today { color: var(--accent); }
+
+/* --- small helper --- */
+.mt-4 { margin-top: 4px; }
+.row-inline-edit {
+  background: var(--surface-2); border: none; border-radius: 8px;
+  color: var(--text); font: inherit; padding: 4px 8px; width: 100%;
+}

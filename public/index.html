@@ -66,11 +66,11 @@
         <span aria-hidden="true">▾</span>
       </button>
     </div>
-    <div style="display:flex; align-items:center; gap:8px;">
+    <div class="topbar-actions">
       <button class="topbar-add" id="topbar-search" aria-label="Search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
       </button>
-      <button class="topbar-add hidden" id="topbar-add" aria-label="Add">
+      <button class="topbar-add" id="topbar-add" aria-label="Add something">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
       <button class="level-badge" id="level-badge" title="Points & streak">
@@ -90,6 +90,10 @@
         </div>
       </div>
 
+      <div id="onboarding-card"></div>
+
+      <div class="now-next" id="now-next"></div>
+
       <div class="stat-strip">
         <div class="stat-chip"><div class="n rounded" id="stat-classes-today">0</div><div class="l">Classes today</div></div>
         <div class="stat-chip"><div class="n rounded" id="stat-due-today">0</div><div class="l">Due today</div></div>
@@ -101,38 +105,55 @@
         <div class="list-card" id="do-next-card"></div>
       </div>
 
-      <div class="section-title">Today's classes</div>
+      <div class="section-title">Today's schedule</div>
       <div class="list-card" id="today-classes"></div>
 
       <div class="section-title">Coming up</div>
       <div class="list-card" id="today-upcoming"></div>
 
       <div class="section-title">This week's workload</div>
-      <div class="list-card" style="padding:12px;">
+      <div class="list-card heatmap-card">
         <div class="heatmap" id="workload-heatmap"></div>
       </div>
     </section>
 
     <!-- ---------- SCHEDULE ---------- -->
     <section class="view" id="view-schedule">
-      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>Weekly schedule</span>
-        <button class="btn ghost" id="btn-edit-dayschedule" style="padding:6px 10px; font-size:12.5px;">Edit bell schedule</button>
+      <div class="section-title row-between">
+        <div class="seg" id="schedule-seg">
+          <button class="seg-btn active" data-sched-mode="week">By day</button>
+          <button class="seg-btn" data-sched-mode="agenda">This week</button>
+        </div>
+        <div class="title-actions">
+          <button class="btn ghost btn-xs" id="btn-period-times">Period times</button>
+          <button class="btn ghost btn-xs" id="btn-edit-dayschedule">Bell schedule</button>
+        </div>
       </div>
       <div id="schedule-week"></div>
+      <div id="schedule-agenda" class="hidden"></div>
+    </section>
+
+    <!-- ---------- CLASS DETAIL ---------- -->
+    <section class="view" id="view-class">
+      <button class="back-link" id="class-back">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>
+        <span>Back</span>
+      </button>
+      <div id="class-detail"></div>
     </section>
 
     <!-- ---------- ASSIGNMENTS ---------- -->
     <section class="view" id="view-assignments">
       <div class="quick-add-row">
-        <input type="text" id="quick-add-input" placeholder="Quick add — e.g. &quot;Essay due Friday 5pm&quot;" />
+        <input type="text" id="quick-add-input" placeholder="Add anything — “essay for bio due Fri 5pm”, “bring goggles”" />
         <button class="btn primary" id="quick-add-submit">Add</button>
       </div>
 
-      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+      <div class="section-title row-between">
         <span>Pending</span>
-        <button class="btn ghost" id="btn-syllabus-import" style="padding:6px 10px; font-size:12.5px;">Paste syllabus</button>
+        <button class="btn ghost btn-xs" id="btn-syllabus-import">Paste syllabus</button>
       </div>
+      <div class="assign-toolbar" id="assign-toolbar"></div>
       <div class="list-card" id="assignments-pending"></div>
 
       <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
@@ -213,11 +234,44 @@
       <div class="settings-list">
         <div class="settings-row">
           <div class="label">Theme</div>
-          <select id="theme-select" style="background:var(--surface-2); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:6px 8px;">
+          <select id="theme-select" class="inline-select">
             <option value="system">System</option>
             <option value="dark">Dark</option>
             <option value="light">Light</option>
           </select>
+        </div>
+      </div>
+
+      <div class="section-title">Schedule</div>
+      <div class="settings-list">
+        <div class="settings-row">
+          <div>
+            <div class="label">Passing periods</div>
+            <div class="sub">Gaps shorter than this are shown as passing time, not free periods.</div>
+          </div>
+          <div class="stepper" id="passing-stepper">
+            <button class="stepper-btn" data-passing-delta="-1" aria-label="Less">−</button>
+            <span id="passing-value" class="rounded">15</span><span class="stepper-unit">min</span>
+            <button class="stepper-btn" data-passing-delta="1" aria-label="More">+</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-title">Data</div>
+      <div class="settings-list">
+        <div class="settings-row">
+          <div>
+            <div class="label">Export calendar (.ics)</div>
+            <div class="sub">Assignments + recurring classes for the current term.</div>
+          </div>
+          <button class="btn ghost btn-xs" id="btn-export-ics">Export</button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="label">Natural-language assist</div>
+            <div class="sub" id="nlassist-sub">Optional. An endpoint that helps parse anything the built-in reader can't.</div>
+          </div>
+          <button class="btn ghost btn-xs" id="btn-nlassist">Set up</button>
         </div>
       </div>
 

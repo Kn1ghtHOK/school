@@ -1,4 +1,4 @@
-const CACHE_NAME = "schoolapp-v2";
+const CACHE_NAME = "schoolapp-v3";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -8,6 +8,7 @@ const APP_SHELL = [
   "/js/push.js",
   "/js/syllabus-parser.js",
   "/js/date-parse.js",
+  "/js/nl-parse.js",
   "/manifest.json",
   "/icons/icon-192.png",
   "/icons/icon-512.png",

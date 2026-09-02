@@ -71,9 +71,32 @@ const classId = r.json.class.id;
 
 r = await call('GET', `/api/terms/${termId}/schedule`, null, token);
 assert(r.json.classes.length === 1, 'schedule has 1 class');
+assert(r.json.classes[0].color === 'class-1', 'first class auto-assigned the first palette color');
 
 r = await call('POST', `/api/terms/${termId}/schedule`, { title: 'No period' }, token);
 assert(r.status === 400, 'class without a period is rejected');
+
+// --- Class: color + links ---
+r = await call('POST', `/api/terms/${termId}/schedule`, { title: 'Bio', period: '4' }, token);
+assert(r.status === 201 && r.json.class.color === 'class-2', 'second class gets the next unused palette color');
+const bioId = r.json.class.id;
+
+r = await call('POST', `/api/terms/${termId}/schedule`, { title: 'Bad color', period: '5', color: 'chartreuse' }, token);
+assert(r.status === 400, 'unknown color token rejected');
+
+r = await call('PUT', `/api/terms/${termId}/schedule/${bioId}`, {
+  color: 'class-7',
+  links: [{ label: 'Canvas', url: 'canvas.school.edu/bio' }, { url: 'example.com/syllabus' }],
+  officeHours: 'Tue/Thu 3-4pm, room 214',
+}, token);
+assert(r.status === 200 && r.json.class.color === 'class-7', 'class color can be changed');
+assert(r.json.class.links.length === 2 && r.json.class.links[0].url === 'https://canvas.school.edu/bio', 'links get https:// added');
+assert(r.json.class.links[1].label === 'https://example.com/syllabus', 'a link with no label falls back to its URL');
+
+r = await call('PUT', `/api/terms/${termId}/schedule/${bioId}`, { links: [{ label: 'x', url: 'not a url' }] }, token);
+assert(r.status === 400, 'a link with a garbage URL is rejected');
+
+await call('DELETE', `/api/terms/${termId}/schedule/${bioId}`, null, token);
 
 // --- Day schedule (bell schedule matrix) ---
 r = await call('GET', `/api/terms/${termId}/dayschedule`, null, token);
@@ -102,6 +125,49 @@ r = await call('PUT', `/api/terms/${termId}/dayschedule/2`, {
   periods: [{ period: '1', start: '8am', end: '08:50' }],
 }, token);
 assert(r.status === 400, 'invalid time format rejected');
+
+// --- Day schedule: non-class blocks (lunch / WIN) ---
+r = await call('PUT', `/api/terms/${termId}/dayschedule/1`, {
+  periods: [
+    { period: '1', start: '08:00', end: '08:50', kind: 'class' },
+    { kind: 'win', label: 'WIN', start: '08:55', end: '09:10' },
+    { kind: 'lunch', label: 'Lunch', start: '12:00', end: '12:30' },
+    { period: '2', start: '12:35', end: '13:25' },
+  ],
+}, token);
+assert(r.status === 200 && r.json.daySchedule['1'].length === 4, 'a day mixing class + WIN + lunch blocks is accepted');
+assert(r.json.daySchedule['1'][1].kind === 'win' && r.json.daySchedule['1'][1].label === 'WIN', 'WIN block stores its kind and label');
+
+r = await call('PUT', `/api/terms/${termId}/dayschedule/1`, {
+  periods: [
+    { kind: 'lunch', start: '11:00', end: '11:30' },
+    { kind: 'lunch', start: '12:00', end: '12:30' },
+  ],
+}, token);
+assert(r.status === 200, 'two non-class blocks with no label are not treated as duplicates');
+assert(r.json.daySchedule['1'][0].label === 'Lunch', 'a labelless lunch block gets a default label');
+
+r = await call('PUT', `/api/terms/${termId}/dayschedule/1`, {
+  periods: [{ kind: 'siesta', start: '11:00', end: '11:30' }],
+}, token);
+assert(r.status === 400, 'an unknown block kind is rejected');
+
+// --- Period-times defaults ---
+r = await call('GET', `/api/terms/${termId}/periodtimes`, null, token);
+assert(r.status === 200 && Object.keys(r.json.periodTimes).length === 0, 'period times start empty');
+
+r = await call('PUT', `/api/terms/${termId}/periodtimes`, {
+  periodTimes: { '1': { start: '08:00', end: '08:50' }, 'WIN': { start: '08:55', end: '09:10' } },
+}, token);
+assert(r.status === 200 && r.json.periodTimes['1'].start === '08:00', 'period times save');
+
+r = await call('GET', `/api/terms/${termId}/dayschedule`, null, token);
+assert(r.json.periodTimes && r.json.periodTimes.WIN.end === '09:10', 'GET dayschedule also returns the period-times map');
+
+r = await call('PUT', `/api/terms/${termId}/periodtimes`, {
+  periodTimes: { '1': { start: '09:00', end: '08:00' } },
+}, token);
+assert(r.status === 400, 'period times ending before they start are rejected');
 
 // --- Notes ---
 r = await call('PUT', `/api/classes/${classId}/notes`, { content: 'Bring calculator' }, token);

@@ -121,6 +121,10 @@ export const api = {
   getDaySchedule: (termId) => request("GET", `/api/terms/${termId}/dayschedule`),
   setDaySchedule: (termId, weekday, periods) => request("PUT", `/api/terms/${termId}/dayschedule/${weekday}`, { periods }),
 
+  // per-term default start/end for each period label
+  getPeriodTimes: (termId) => request("GET", `/api/terms/${termId}/periodtimes`),
+  setPeriodTimes: (termId, periodTimes) => request("PUT", `/api/terms/${termId}/periodtimes`, { periodTimes }),
+
   // assignments
   listAssignments: (termId) => request("GET", `/api/terms/${termId}/assignments`),
   createAssignment: (termId, data) => request("POST", `/api/terms/${termId}/assignments`, data),
